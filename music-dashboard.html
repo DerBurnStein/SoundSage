@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Statistics Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #222222;
+    --border: #2a2a2a;
+    --accent: #1db954;
+    --accent2: #1ed760;
+    --text: #ffffff;
+    --text-muted: #888888;
+    --text-dim: #555555;
+    --red: #e8514a;
+    --yellow: #f5c842;
+    --teal: #3bbfb2;
+    --blue: #4a90d9;
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    height: 64px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 38px;
+    height: 38px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+
+  .logo-text h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    line-height: 1.1;
+  }
+
+  .logo-text p {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+
+  /* NAV */
+  nav {
+    display: flex;
+    gap: 4px;
+  }
+
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: none;
+    color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .nav-btn:hover {
+    color: var(--text);
+    background: var(--surface2);
+  }
+
+  .nav-btn.active {
+    background: var(--text);
+    color: var(--bg);
+    font-weight: 500;
+  }
+
+  .nav-btn .icon {
+    font-size: 14px;
+  }
+
+  /* USER */
+  .user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .user-info {
+    text-align: right;
+  }
+
+  .user-info .name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .user-info .handle {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--blue));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 700;
+    font-family: 'Syne', sans-serif;
+  }
+
+  /* MAIN */
+  main {
+    padding: 40px 32px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 32px;
+  }
+
+  .page-header h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .page-header p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-top: 4px;
+    font-weight: 300;
+  }
+
+  .time-filters {
+    display: flex;
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px;
+    margin-top: 4px;
+  }
+
+  .time-btn {
+    padding: 7px 14px;
+    border-radius: 7px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .time-btn.active {
+    background: var(--text);
+    color: var(--bg);
+    font-weight: 600;
+  }
+
+  .time-btn:hover:not(.active) {
+    color: var(--text);
+  }
+
+  /* STATS GRID */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: border-color 0.2s, transform 0.2s;
+    cursor: default;
+    animation: fadeUp 0.5s ease both;
+  }
+
+  .stat-card:nth-child(1) { animation-delay: 0.05s; }
+  .stat-card:nth-child(2) { animation-delay: 0.1s; }
+  .stat-card:nth-child(3) { animation-delay: 0.15s; }
+  .stat-card:nth-child(4) { animation-delay: 0.2s; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .stat-card:hover {
+    border-color: #3a3a3a;
+    transform: translateY(-2px);
+  }
+
+  .stat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .stat-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .stat-icon {
+    width: 34px;
+    height: 34px;
+    background: #1f1f1f;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+  }
+
+  .stat-value {
+    font-family: 'Syne', sans-serif;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    line-height: 1;
+  }
+
+  .stat-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 300;
+    margin-top: 4px;
+  }
+
+  /* CHARTS */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    animation: fadeUp 0.5s ease 0.3s both;
+  }
+
+  .chart-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+
+  .chart-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 300;
+    margin-top: 4px;
+    margin-bottom: 24px;
+  }
+
+  .chart-wrap {
+    height: 280px;
+    position: relative;
+  }
+
+  /* GENRE PIE */
+  .genre-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .pie-wrap {
+    height: 260px;
+    position: relative;
+    margin: 0 auto;
+    width: 260px;
+  }
+
+  .genre-legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .legend-item strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* TOP TRACKS SECTION */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    animation: fadeUp 0.5s ease 0.4s both;
+  }
+
+  .list-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+  }
+
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .see-all {
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    font-weight: 500;
+    transition: opacity 0.2s;
+  }
+  .see-all:hover { opacity: 0.7; }
+
+  .track-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+
+  .track-item:last-child { border-bottom: none; }
+
+  .track-num {
+    font-size: 12px;
+    color: var(--text-dim);
+    width: 18px;
+    text-align: right;
+    flex-shrink: 0;
+    font-weight: 500;
+  }
+
+  .track-thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .track-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .track-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .track-artist {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 300;
+    margin-top: 2px;
+  }
+
+  .track-plays {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 400;
+    flex-shrink: 0;
+  }
+
+  .play-bar-wrap {
+    width: 60px;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .play-bar {
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 1100px) {
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .charts-grid { grid-template-columns: 1fr; }
+    .bottom-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🎵</div>
+    <div class="logo-text">
+      <h1>Project Idea</h1>
+      <p>Music Statistics</p>
+    </div>
+  </div>
+
+  <nav>
+    <button class="nav-btn active"><span class="icon">📊</span> Dashboard</button>
+    <button class="nav-btn"><span class="icon">🎤</span> Top Artists</button>
+    <button class="nav-btn"><span class="icon">🎵</span> Top Tracks</button>
+    <button class="nav-btn"><span class="icon">💿</span> Top Albums</button>
+    <button class="nav-btn"><span class="icon">🕐</span> Recently Played</button>
+  </nav>
+
+  <div class="user">
+    <div class="user-info">
+      <div class="name">User Name</div>
+      <div class="handle">@username</div>
+    </div>
+    <div class="user-avatar">U</div>
+  </div>
+</header>
+
+<main>
+  <div class="page-header">
+    <div>
+      <h2>Your Music Statistics</h2>
+      <p>Overview of your listening habits</p>
+    </div>
+    <div class="time-filters">
+      <button class="time-btn active" onclick="setTime(this)">Last 4 Weeks</button>
+      <button class="time-btn" onclick="setTime(this)">Last 6 Months</button>
+      <button class="time-btn" onclick="setTime(this)">All Time</button>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Total Listening Time</span>
+        <div class="stat-icon">🕐</div>
+      </div>
+      <div>
+        <div class="stat-value">761h 18m</div>
+        <div class="stat-sub">124 min/day avg</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Tracks Played</span>
+        <div class="stat-icon">🎵</div>
+      </div>
+      <div>
+        <div class="stat-value">3,421</div>
+        <div class="stat-sub">Unique tracks</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Artists Discovered</span>
+        <div class="stat-icon">👤</div>
+      </div>
+      <div>
+        <div class="stat-value">287</div>
+        <div class="stat-sub">Different artists</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Albums Listened</span>
+        <div class="stat-icon">💿</div>
+      </div>
+      <div>
+        <div class="stat-value">512</div>
+        <div class="stat-sub">Unique albums</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-title">Listening Activity</div>
+      <div class="chart-sub">Your daily listening time over the past week</div>
+      <div class="chart-wrap">
+        <canvas id="barChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">Genre Distribution</div>
+      <div class="chart-sub">Your most listened genres</div>
+      <div class="genre-wrap">
+        <div class="pie-wrap">
+          <canvas id="pieChart"></canvas>
+        </div>
+        <div class="genre-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#1db954"></div><strong>Pop</strong> 35%</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#e8514a"></div><strong>Hip Hop</strong> 28%</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#3bbfb2"></div><strong>R&B</strong> 18%</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#f5c842"></div><strong>Rock</strong> 12%</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#4a90d9"></div><strong>Electronic</strong> 7%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="list-card">
+      <div class="list-header">
+        <div>
+          <div class="chart-title">Top Tracks</div>
+          <div class="chart-sub" style="margin-bottom:0">Most played this period</div>
+        </div>
+        <a class="see-all">See all →</a>
+      </div>
+      <div id="trackList"></div>
+    </div>
+
+    <div class="list-card">
+      <div class="list-header">
+        <div>
+          <div class="chart-title">Top Artists</div>
+          <div class="chart-sub" style="margin-bottom:0">Who you've been listening to</div>
+        </div>
+        <a class="see-all">See all →</a>
+      </div>
+      <div id="artistList"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // Nav interactivity
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  function setTime(el) {
+    document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  // Bar Chart
+  const barCtx = document.getElementById('barChart').getContext('2d');
+  new Chart(barCtx, {
+    type: 'bar',
+    data: {
+      labels: ['Feb 20','Feb 21','Feb 22','Feb 23','Feb 24','Feb 25','Feb 26','Feb 27'],
+      datasets: [{
+        data: [105, 140, 165, 170, 92, 190, 148, 163, 137],
+        backgroundColor: ctx => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 300);
+          g.addColorStop(0, '#1ed760');
+          g.addColorStop(1, '#1db95466');
+          return g;
+        },
+        borderRadius: 6,
+        borderSkipped: false,
+        hoverBackgroundColor: '#1ed760',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        backgroundColor: '#222',
+        borderColor: '#333',
+        borderWidth: 1,
+        titleColor: '#fff',
+        bodyColor: '#aaa',
+        callbacks: { label: ctx => ` ${ctx.parsed.y} min` }
+      }},
+      scales: {
+        x: {
+          grid: { color: 'transparent' },
+          ticks: { color: '#666', font: { family: 'DM Sans', size: 11 } },
+          border: { color: 'transparent' }
+        },
+        y: {
+          min: 0,
+          max: 200,
+          grid: { color: '#1f1f1f', drawTicks: false },
+          ticks: { color: '#555', font: { family: 'DM Sans', size: 11 }, stepSize: 45 },
+          border: { color: 'transparent', dash: [4, 4] }
+        }
+      }
+    }
+  });
+
+  // Pie Chart
+  const pieCtx = document.getElementById('pieChart').getContext('2d');
+  new Chart(pieCtx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Pop','Hip Hop','R&B','Rock','Electronic'],
+      datasets: [{
+        data: [35, 28, 18, 12, 7],
+        backgroundColor: ['#1db954','#e8514a','#3bbfb2','#f5c842','#4a90d9'],
+        hoverBackgroundColor: ['#1ed760','#f06059','#48d4c7','#f7d55a','#5aa0e8'],
+        borderWidth: 0,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '50%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#222',
+          borderColor: '#333',
+          borderWidth: 1,
+          titleColor: '#fff',
+          bodyColor: '#aaa',
+          callbacks: { label: ctx => ` ${ctx.parsed}%` }
+        }
+      }
+    }
+  });
+
+  // Track List
+  const tracks = [
+    { name: 'Blinding Lights', artist: 'The Weeknd', plays: 87, color: '#e8514a', emoji: '🔴' },
+    { name: 'As It Was', artist: 'Harry Styles', plays: 74, color: '#1db954', emoji: '🟢' },
+    { name: 'Levitating', artist: 'Dua Lipa', plays: 68, color: '#4a90d9', emoji: '🔵' },
+    { name: 'Heat Waves', artist: 'Glass Animals', plays: 61, color: '#f5c842', emoji: '🟡' },
+    { name: 'Stay', artist: 'The Kid LAROI', plays: 55, color: '#3bbfb2', emoji: '🩵' },
+  ];
+
+  const trackList = document.getElementById('trackList');
+  tracks.forEach((t, i) => {
+    const pct = Math.round((t.plays / tracks[0].plays) * 100);
+    trackList.innerHTML += `
+      <div class="track-item">
+        <span class="track-num">${i + 1}</span>
+        <div class="track-thumb" style="background:${t.color}22">${t.emoji}</div>
+        <div class="track-info">
+          <div class="track-name">${t.name}</div>
+          <div class="track-artist">${t.artist}</div>
+        </div>
+        <div class="play-bar-wrap"><div class="play-bar" style="width:${pct}%"></div></div>
+        <span class="track-plays">${t.plays} plays</span>
+      </div>`;
+  });
+
+  // Artist List
+  const artists = [
+    { name: 'The Weeknd', genre: 'R&B / Pop', plays: 214, emoji: '🎤', color: '#e8514a' },
+    { name: 'Drake', genre: 'Hip Hop', plays: 189, emoji: '🎤', color: '#f5c842' },
+    { name: 'Taylor Swift', genre: 'Pop', plays: 176, emoji: '🎤', color: '#1db954' },
+    { name: 'Kendrick Lamar', genre: 'Hip Hop', plays: 152, emoji: '🎤', color: '#4a90d9' },
+    { name: 'Dua Lipa', genre: 'Pop / Dance', plays: 134, emoji: '🎤', color: '#3bbfb2' },
+  ];
+
+  const artistList = document.getElementById('artistList');
+  artists.forEach((a, i) => {
+    const pct = Math.round((a.plays / artists[0].plays) * 100);
+    artistList.innerHTML += `
+      <div class="track-item">
+        <span class="track-num">${i + 1}</span>
+        <div class="track-thumb" style="background:${a.color}22">${a.emoji}</div>
+        <div class="track-info">
+          <div class="track-name">${a.name}</div>
+          <div class="track-artist">${a.genre}</div>
+        </div>
+        <div class="play-bar-wrap"><div class="play-bar" style="width:${pct}%; background:${a.color}"></div></div>
+        <span class="track-plays">${a.plays} plays</span>
+      </div>`;
+  });
+</script>
+</body>
+</html>
