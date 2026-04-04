@@ -214,6 +214,45 @@
     color: var(--text);
   }
 
+  .spotify-connect-wrap {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .spotify-connect-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid #1db95466;
+    background: #1db95422;
+    color: #d9ffe8;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 8px 14px;
+    transition: all 0.2s ease;
+  }
+
+  .spotify-connect-link:hover {
+    background: #1db95433;
+    border-color: #1ed760aa;
+  }
+
+  .spotify-connect-link.connected {
+    background: #1db954;
+    color: #0f0f0f;
+    border-color: #1ed760;
+  }
+
+  .spotify-status {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
   /* STATS GRID */
   .stats-grid {
     display: grid;
@@ -514,6 +553,16 @@
     <div>
       <h2>Your Music Statistics</h2>
       <p>Overview of your listening habits</p>
+      <div class="spotify-connect-wrap">
+        <a
+          id="spotifyConnectLink"
+          class="spotify-connect-link"
+          href="http://127.0.0.1:3000/auth/spotify/login"
+        >
+          Connect Spotify
+        </a>
+        <span id="spotifyStatus" class="spotify-status">Connect your account to authorize the Spotify connector.</span>
+      </div>
     </div>
     <div class="time-filters">
       <button class="time-btn active" onclick="setTime(this)">Last 4 Weeks</button>
@@ -629,6 +678,27 @@
   function setTime(el) {
     document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
     el.classList.add('active');
+  }
+
+  const spotifyLink = document.getElementById('spotifyConnectLink');
+  const spotifyStatus = document.getElementById('spotifyStatus');
+  const authParams = new URLSearchParams(window.location.search);
+  const currentPage = new URL(window.location.href);
+  currentPage.search = '';
+  currentPage.hash = '';
+  const loginUrl = new URL('http://127.0.0.1:3000/auth/spotify/login');
+  loginUrl.searchParams.set('returnTo', currentPage.toString());
+  spotifyLink.href = loginUrl.toString();
+
+  const isSpotifyConnected = authParams.get('status') === 'success' && authParams.get('provider') === 'spotify';
+  if (isSpotifyConnected) {
+    spotifyLink.textContent = 'Spotify Connected';
+    spotifyLink.classList.add('connected');
+    spotifyStatus.textContent = 'Spotify authorization complete. Your connector is now linked.';
+    window.history.replaceState({}, document.title, currentPage.toString());
+  } else if (authParams.get('status') === 'error') {
+    const message = authParams.get('message') || 'Unable to connect Spotify.';
+    spotifyStatus.textContent = `Spotify authorization failed: ${message}`;
   }
 
   // Bar Chart

@@ -11,6 +11,7 @@ declare module 'express-session' {
       state: string;
       codeVerifier: string;
       createdAt: number;
+      returnTo?: string;
     };
     authUser?: {
       id: string;
@@ -21,6 +22,7 @@ declare module 'express-session' {
 }
 
 const router = Router();
+const FRONTEND_ALLOWED_RETURN_ORIGIN = process.env.SPOTIFY_FRONTEND_ALLOWED_ORIGIN ?? 'http://127.0.0.1:5500';
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -38,10 +40,24 @@ router.get('/login', (req: Request, res: Response) => {
   const { codeVerifier, codeChallenge } = generatePkcePair();
   const state = generateState();
 
+  const requestedReturnTo = typeof req.query.returnTo === 'string' ? req.query.returnTo : '';
+  let safeReturnTo: string | undefined;
+  if (requestedReturnTo) {
+    try {
+      const parsed = new URL(requestedReturnTo);
+      if (parsed.origin === FRONTEND_ALLOWED_RETURN_ORIGIN) {
+        safeReturnTo = parsed.toString();
+      }
+    } catch {
+      safeReturnTo = undefined;
+    }
+  }
+
   req.session.spotifyAuth = {
     state,
     codeVerifier,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    returnTo: safeReturnTo
   };
 
   const params = new URLSearchParams({
@@ -63,8 +79,15 @@ router.get('/callback', async (req: Request, res: Response) => {
   const frontendCallbackUrl = requiredEnv('SPOTIFY_FRONTEND_CALLBACK_URL');
   const clientId = requiredEnv('SPOTIFY_CLIENT_ID');
 
+  const buildFrontendRedirect = (params: Record<string, string>) => {
+    const destination = req.session.spotifyAuth?.returnTo ?? frontendCallbackUrl;
+    const redirectTarget = new URL(destination);
+    Object.entries(params).forEach(([key, value]) => redirectTarget.searchParams.set(key, value));
+    return redirectTarget.toString();
+  };
+
   if (error) {
-    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent(String(error))}`);
+    return res.redirect(buildFrontendRedirect({ status: 'error', message: String(error) }));
   }
 
   if (!code || !state || !req.session.spotifyAuth) {
@@ -72,7 +95,7 @@ router.get('/callback', async (req: Request, res: Response) => {
   }
 
   if (req.session.spotifyAuth.state !== String(state)) {
-    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent('Invalid state')}`);
+    return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Invalid state' }));
   }
 
   const tokenBody = new URLSearchParams({
@@ -91,7 +114,7 @@ router.get('/callback', async (req: Request, res: Response) => {
 
   const tokenData = await tokenResponse.json();
   if (!tokenResponse.ok) {
-    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent('Token exchange failed')}`);
+    return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Token exchange failed' }));
   }
 
   const profileResponse = await fetch('https://api.spotify.com/v1/me', {
@@ -100,7 +123,7 @@ router.get('/callback', async (req: Request, res: Response) => {
   const profileData = await profileResponse.json();
 
   if (!profileResponse.ok) {
-    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent('Profile fetch failed')}`);
+    return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Profile fetch failed' }));
   }
 
   const userId = crypto.randomUUID();
@@ -121,7 +144,7 @@ router.get('/callback', async (req: Request, res: Response) => {
   req.session.authUser = { id: userId, spotifyUserId, displayName };
   req.session.spotifyAuth = undefined;
 
-  return res.redirect(`${frontendCallbackUrl}?status=success`);
+  return res.redirect(buildFrontendRedirect({ status: 'success', provider: 'spotify' }));
 });
 
 router.get('/me', async (req: Request, res: Response) => {
