@@ -10,3 +10,14 @@ cd pocs/soundsage-auth-poc
 npm install
 npm start
 ```
+
+## Server (integration routes)
+Run the backend from `server`:
+```bash
+cd server
+npm install
+npm start
+```
+
+The server listens on `http://127.0.0.1:3000` by default and mounts the Spotify auth routes at `/auth/spotify`.
+
