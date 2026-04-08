@@ -2,7 +2,7 @@ import React from 'react';
 
 export type ConnectedUser = {
   id: string;
-  spotifyUserId: string;
+  spotifyUserId: string | null;
   displayName: string | null;
 };
 
@@ -13,16 +13,16 @@ type Props = {
 
 export default function ConnectedAccountCard({ user, onLogout }: Props) {
   return (
-    <div>
+    <section>
       <h3>Spotify Connected</h3>
-      <p>Connected as: {user.displayName ?? user.spotifyUserId}</p>
+      <p>
+        Signed in as <strong>{user.displayName ?? user.spotifyUserId ?? 'SoundSage user'}</strong>
+      </p>
       {onLogout ? (
         <button type="button" onClick={onLogout}>
-          Disconnect
+          Disconnect Spotify
         </button>
       ) : null}
-    </div>
+    </section>
   );
 }
-
-// by Jeremy Southern
