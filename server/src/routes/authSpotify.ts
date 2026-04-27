@@ -15,7 +15,7 @@ declare module 'express-session' {
     };
     authUser?: {
       id: string;
-      spotifyUserId: string;
+      spotifyUserId: string | null;
       displayName: string | null;
     };
   }
@@ -35,30 +35,12 @@ function requiredEnv(name: string): string {
 router.get('/login', (req: Request, res: Response) => {
   const clientId = requiredEnv('SPOTIFY_CLIENT_ID');
   const redirectUri = requiredEnv('SPOTIFY_REDIRECT_URI');
-  const scopes = process.env.SPOTIFY_SCOPES ?? 'user-read-recently-played user-top-read';
+  const scopes = process.env.SPOTIFY_SCOPES ?? 'user-read-recently-played user-top-read user-read-email';
 
   const { codeVerifier, codeChallenge } = generatePkcePair();
   const state = generateState();
 
-  const requestedReturnTo = typeof req.query.returnTo === 'string' ? req.query.returnTo : '';
-  let safeReturnTo: string | undefined;
-  if (requestedReturnTo) {
-    try {
-      const parsed = new URL(requestedReturnTo);
-      if (parsed.origin === FRONTEND_ALLOWED_RETURN_ORIGIN) {
-        safeReturnTo = parsed.toString();
-      }
-    } catch {
-      safeReturnTo = undefined;
-    }
-  }
-
-  req.session.spotifyAuth = {
-    state,
-    codeVerifier,
-    createdAt: Date.now(),
-    returnTo: safeReturnTo
-  };
+  req.session.spotifyAuth = { state, codeVerifier, createdAt: Date.now() };
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -90,12 +72,8 @@ router.get('/callback', async (req: Request, res: Response) => {
     return res.redirect(buildFrontendRedirect({ status: 'error', message: String(error) }));
   }
 
-  if (!code || !state || !req.session.spotifyAuth) {
-    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent('Missing code or state')}`);
-  }
-
-  if (req.session.spotifyAuth.state !== String(state)) {
-    return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Invalid state' }));
+  if (!code || !state || !req.session.spotifyAuth || req.session.spotifyAuth.state !== String(state)) {
+    return res.redirect(`${frontendCallbackUrl}?status=error&message=${encodeURIComponent('Missing or invalid state')}`);
   }
 
   const tokenBody = new URLSearchParams({
@@ -112,31 +90,47 @@ router.get('/callback', async (req: Request, res: Response) => {
     body: tokenBody
   });
 
-  const tokenData = await tokenResponse.json();
   if (!tokenResponse.ok) {
     return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Token exchange failed' }));
   }
 
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    scope?: string;
+    expires_in?: number;
+  };
+
   const profileResponse = await fetch('https://api.spotify.com/v1/me', {
     headers: { Authorization: `Bearer ${tokenData.access_token}` }
   });
-  const profileData = await profileResponse.json();
 
   if (!profileResponse.ok) {
     return res.redirect(buildFrontendRedirect({ status: 'error', message: 'Profile fetch failed' }));
   }
 
-  const userId = crypto.randomUUID();
+  const profileData = await profileResponse.json() as {
+    id: string;
+    display_name?: string;
+    email?: string;
+    country?: string;
+    product?: string;
+  };
+
+  const proposedUserId = crypto.randomUUID();
   const spotifyUserId = String(profileData.id);
   const displayName = profileData.display_name ? String(profileData.display_name) : null;
   const expiresAt = new Date(Date.now() + Number(tokenData.expires_in ?? 3600) * 1000);
 
-  await upsertSpotifyUserTokens({
-    userId,
+  const userId = await upsertSpotifyUserTokens({
+    userId: req.session.authUser?.id ?? proposedUserId,
     spotifyUserId,
     displayName,
-    accessToken: encryptToken(String(tokenData.access_token)),
-    refreshToken: encryptToken(String(tokenData.refresh_token ?? '')),
+    email: profileData.email ?? null,
+    country: profileData.country ?? null,
+    productTier: profileData.product ?? null,
+    accessToken: encryptToken(tokenData.access_token),
+    refreshToken: encryptToken(tokenData.refresh_token ?? ''),
     scope: tokenData.scope ? String(tokenData.scope) : null,
     expiresAt
   });
@@ -147,15 +141,12 @@ router.get('/callback', async (req: Request, res: Response) => {
   return res.redirect(buildFrontendRedirect({ status: 'success', provider: 'spotify' }));
 });
 
-router.get('/me', async (req: Request, res: Response) => {
+router.get('/me', (req: Request, res: Response) => {
   if (!req.session.authUser) {
     return res.status(401).json({ authenticated: false });
   }
 
-  return res.json({
-    authenticated: true,
-    user: req.session.authUser
-  });
+  return res.json({ authenticated: true, user: req.session.authUser });
 });
 
 router.post('/logout', (req: Request, res: Response) => {
@@ -163,11 +154,10 @@ router.post('/logout', (req: Request, res: Response) => {
     if (err) {
       return res.status(500).json({ ok: false });
     }
+
     res.clearCookie('connect.sid');
     return res.json({ ok: true });
   });
 });
 
 export default router;
-
-// by Jeremy Southern

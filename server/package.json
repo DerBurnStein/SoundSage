@@ -1,16 +1,31 @@
 {
-  "name": "soundsage-server",
+  "name": "soundsage-api",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "tsx watch src/index.ts",
+    "start": "node --enable-source-maps --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
+    "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "express-session": "^1.18.2",
-    "pg": "^8.16.3"
+    "express-session": "^1.18.1",
+    "pg": "^8.13.1",
+    "google-auth-library": "^9.15.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.0",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
   }
 }
