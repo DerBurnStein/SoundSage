@@ -65,7 +65,7 @@ const WEEKLY = [612, 588, 705, 642, 580, 720, 810, 690, 754, 822, 690, 786];
 
 const NAV_ITEMS = [
   { id: 'overview',  label: 'Overview' },
-  { id: 'history',   label: 'Overview' },
+  { id: 'history',   label: 'History' },
   { id: 'patterns',  label: 'Patterns' },
   { id: 'tracks',    label: 'Tracks' },
   { id: 'artists',   label: 'Artists' },

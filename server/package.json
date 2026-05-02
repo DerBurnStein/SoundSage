@@ -1,0 +1,37 @@
+{
+  "name": "soundsage-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "generate": "prisma generate",
+    "seed": "node prisma/seed.js",
+    "test": "node --test test/api.integration.test.js test/oauth.flow.test.js test/db.integration.test.js test/analytics.test.js test/spotifyAuth.test.js",
+    "worker": "node src/worker.js",
+    "scheduler": "node src/scheduler.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "@prisma/client": "^5.22.0",
+    "google-auth-library": "^10.5.0",
+    "bullmq": "^5.10.3",
+    "node-cron": "^3.0.3",
+    "ioredis": "^5.4.1",
+    "zod": "^3.23.8",
+    "cookie-parser": "^1.4.7",
+    "express-rate-limit": "^7.4.1",
+    "@google-cloud/kms": "^4.5.0",
+    "supertest": "^7.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  }
+}
