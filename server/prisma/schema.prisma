@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String           @id @default(cuid())
+  googleSub   String           @unique
+  displayName String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  account     SpotifyAccount?
+  events      ListeningEvent[]
+  ingestion   IngestionState?
+  oauthState  OAuthState?
+  ingestionMetrics IngestionMetric[]
+}
+
+model SpotifyAccount {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyUserId String   @unique
+  accessToken   String
+  refreshToken  String
+  expiresAt     DateTime
+  cursor        DateTime?
+  lastSyncAt    DateTime?
+  failureCount  Int      @default(0)
+  connected     Boolean  @default(false)
+  scopeValid    Boolean  @default(false)
+  scopeMissing  String[] @default([])
+  grantedScopes String[] @default([])
+
+  @@index([lastSyncAt])
+}
+
+model ListeningEvent {
+  id            BigInt   @id @default(autoincrement())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyTrackId String
+  trackName     String
+  artistNames   Json
+  playedAt      DateTime
+  msPlayed      Int?
+  genre         String?
+
+  @@unique([userId, spotifyTrackId, playedAt])
+  @@index([userId, playedAt(sort: Desc)])
+  @@index([userId, spotifyTrackId])
+  @@index([userId, genre])
+}
+
+model IngestionState {
+  userId                String   @id
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  highWatermarkPlayedAt DateTime?
+  status                String   @default("idle")
+  lastRunStartedAt      DateTime?
+  lastRunFinishedAt     DateTime?
+  lastError             String?
+}
+
+model OAuthState {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stateHash String
+  verifier  String
+  csrfNonce String
+  createdAt DateTime @default(now())
+}
+
+
+model IngestionMetric {
+  id           BigInt   @id @default(autoincrement())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       String
+  latencyMs    Int
+  insertedCount Int
+  receivedCount Int
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+}

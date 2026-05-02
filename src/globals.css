@@ -1,0 +1,184 @@
+/* SoundSage — design token stylesheet
+ * Copy this into your Next.js app/globals.css (or import it there).
+ * All component styles reference these CSS variables — do not rename them.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;500;600;700;900&family=Shippori+Mincho:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─────────────────────────────────────────────────────
+   Base (washi / paper) theme — default
+   ───────────────────────────────────────────────────── */
+:root {
+  --paper:   #f0e8d6;   /* washi / kinari */
+  --paper-2: #e6dcc4;   /* unbleached cream */
+  --paper-3: #d8cbab;   /* deeper kraft */
+  --rule:    #1a1815;   /* sumi */
+  --ink:     #14120e;   /* sumi ink */
+  --ink-2:   #2a2620;
+  --muted:   #6b6450;
+  --dim:     #948c75;
+  --moss:    #5a7a5a;   /* seiji / celadon */
+  --moss-2:  #4a6849;
+  --ember:   #c1272d;   /* shu / vermilion seal */
+  --ember-2: #9e1d22;
+  --gold:    #b08840;   /* kincha */
+  --plum:    #6b3a4f;
+  --sky:     #345876;   /* aizome indigo */
+  --seal:    #c1272d;   /* hanko stamp */
+
+  --font-sans:    'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+  --font-serif:   'Noto Serif JP', serif;
+  --font-mincho:  'Shippori Mincho', 'Noto Serif JP', serif;
+}
+
+/* ─────────────────────────────────────────────────────
+   Midnight (sumi dark) theme
+   ───────────────────────────────────────────────────── */
+[data-theme="midnight"] {
+  --paper:   #14120e;
+  --paper-2: #1c1a14;
+  --paper-3: #25221a;
+  --rule:    #f0e8d6;
+  --ink:     #f0e8d6;
+  --ink-2:   #d4cdb8;
+  --muted:   #8c8676;
+  --dim:     #5e594d;
+  --moss:    #a8c08a;
+  --moss-2:  #becead;
+  --ember:   #e85a55;
+  --gold:    #d8b04a;
+  --plum:    #c089a0;
+  --sky:     #8eb0d2;
+  --seal:    #e85a55;
+}
+
+/* ─────────────────────────────────────────────────────
+   Per-tab subthemes
+   Each tab sets data-tab on <html>; the page repaints.
+   ───────────────────────────────────────────────────── */
+
+/* Overview — washi default (no override needed) */
+
+/* History — Hokusai: Prussian blue, indigo, gold */
+[data-tab="history"] {
+  --paper:   #e8ecec;
+  --paper-2: #d4dde0;
+  --paper-3: #b8c6cc;
+  --rule:    #0b2545;
+  --ink:     #0b2545;
+  --ink-2:   #14375f;
+  --muted:   #4a6580;
+  --dim:     #7e94a8;
+  --seal:    #0b2545;
+  --ember:   #d4a017;
+  --moss:    #2a5b7a;
+  --gold:    #d4a017;
+  --plum:    #1f4068;
+  --sky:     #6196b8;
+}
+
+/* Patterns — sakura: pale rose, plum, leaf green */
+[data-tab="patterns"] {
+  --paper:   #fbe8e7;
+  --paper-2: #f5d4d3;
+  --paper-3: #ecbab9;
+  --rule:    #4a1c2b;
+  --ink:     #3a1422;
+  --ink-2:   #5a2438;
+  --muted:   #7a4458;
+  --dim:     #a07a86;
+  --seal:    #c8456c;
+  --ember:   #a83d5d;
+  --moss:    #6b8a4e;
+  --gold:    #b88848;
+  --plum:    #6b3a4f;
+  --sky:     #4a6580;
+}
+
+/* Tracks — torii vermilion + warm kraft */
+[data-tab="tracks"] {
+  --paper:   #f5e6d3;
+  --paper-2: #ecd6b8;
+  --paper-3: #dfc498;
+  --rule:    #2a1810;
+  --ink:     #1f110a;
+  --ink-2:   #3a2418;
+  --muted:   #7a5a40;
+  --dim:     #a08868;
+  --seal:    #b8341f;
+  --ember:   #b8341f;
+  --moss:    #4a5d3a;
+  --gold:    #d4a017;
+  --plum:    #6b3a4f;
+  --sky:     #345876;
+}
+
+/* Artists — gold leaf on lacquer black */
+[data-tab="artists"] {
+  --paper:   #1a1612;
+  --paper-2: #221d18;
+  --paper-3: #2c251e;
+  --rule:    #d4b070;
+  --ink:     #f0dca8;
+  --ink-2:   #d4b070;
+  --muted:   #a08858;
+  --dim:     #6e5c3a;
+  --seal:    #d4a017;
+  --ember:   #c1272d;
+  --moss:    #9aaa6a;
+  --gold:    #e8c060;
+  --plum:    #c089a0;
+  --sky:     #8eb0d2;
+}
+
+/* ─────────────────────────────────────────────────────
+   Density variants
+   ───────────────────────────────────────────────────── */
+:root {
+  --density-pad-section: 56px 28px 40px;
+  --density-gap:         48px;
+}
+[data-density="compact"] {
+  --density-pad-section: 32px 28px 24px;
+  --density-gap:         28px;
+}
+[data-density="roomy"] {
+  --density-pad-section: 72px 36px 56px;
+  --density-gap:         64px;
+}
+
+/* ─────────────────────────────────────────────────────
+   Global resets
+   ───────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { background: var(--paper); }
+body {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Smooth tab/theme transitions */
+body *, body *::before, body *::after {
+  transition:
+    background-color 0.35s ease,
+    color 0.35s ease,
+    border-color 0.35s ease;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 3px; }
+
+/* Selection */
+::selection { background: var(--ink); color: var(--paper); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
