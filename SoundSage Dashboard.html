@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoundSage — Listening Almanac</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;500;600;700;900&family=Shippori+Mincho:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  :root {
+    /* Washi / sumi / shu palette — East Asian editorial */
+    --paper: #f0e8d6;     /* washi / kinari */
+    --paper-2: #e6dcc4;   /* unbleached cream */
+    --paper-3: #d8cbab;   /* deeper kraft */
+    --rule: #1a1815;      /* sumi */
+    --ink: #14120e;       /* sumi ink */
+    --ink-2: #2a2620;
+    --muted: #6b6450;
+    --dim: #948c75;
+    --moss: #5a7a5a;      /* seiji / celadon */
+    --moss-2: #4a6849;
+    --ember: #c1272d;     /* shu / vermilion seal */
+    --ember-2: #9e1d22;
+    --gold: #b08840;      /* kincha */
+    --plum: #6b3a4f;
+    --sky: #345876;       /* aizome indigo */
+    --seal: #c1272d;      /* hanko stamp */
+  }
+
+  /* Sumi (midnight) theme */
+  [data-theme="midnight"] {
+    --paper: #14120e;
+    --paper-2: #1c1a14;
+    --paper-3: #25221a;
+    --rule: #f0e8d6;
+    --ink: #f0e8d6;
+    --ink-2: #d4cdb8;
+    --muted: #8c8676;
+    --dim: #5e594d;
+    --moss: #a8c08a;
+    --moss-2: #beceA0;
+    --ember: #e85a55;
+    --gold: #d8b04a;
+    --plum: #c089a0;
+    --sky: #8eb0d2;
+    --seal: #e85a55;
+  }
+
+  /* Per-tab subthemes — each tab repaints the page */
+
+  /* Overview = washi default (no override) */
+
+  /* History = Hokusai Wave: Prussian blue, indigo, foam */
+  [data-tab="history"] {
+    --paper: #e8ecec;
+    --paper-2: #d4dde0;
+    --paper-3: #b8c6cc;
+    --rule: #0b2545;
+    --ink: #0b2545;
+    --ink-2: #14375f;
+    --muted: #4a6580;
+    --dim: #7e94a8;
+    --seal: #0b2545;
+    --ember: #d4a017;     /* gold mountain accent */
+    --moss: #2a5b7a;
+    --gold: #d4a017;
+    --plum: #1f4068;
+    --sky: #6196b8;
+  }
+
+  /* Patterns = sakura: pale rose, plum, leaf green */
+  [data-tab="patterns"] {
+    --paper: #fbe8e7;
+    --paper-2: #f5d4d3;
+    --paper-3: #ecbab9;
+    --rule: #4a1c2b;
+    --ink: #3a1422;
+    --ink-2: #5a2438;
+    --muted: #7a4458;
+    --dim: #a07a86;
+    --seal: #c8456c;       /* sakura pink */
+    --ember: #a83d5d;
+    --moss: #6b8a4e;
+    --gold: #b88848;
+    --plum: #6b3a4f;
+    --sky: #4a6580;
+  }
+
+  /* Tracks = vermilion torii: deep red, gold, ink */
+  [data-tab="tracks"] {
+    --paper: #f5e6d3;
+    --paper-2: #ecd6b8;
+    --paper-3: #dfc498;
+    --rule: #2a1810;
+    --ink: #1f110a;
+    --ink-2: #3a2418;
+    --muted: #7a5a40;
+    --dim: #a08868;
+    --seal: #b8341f;        /* torii vermilion */
+    --ember: #b8341f;
+    --moss: #4a5d3a;
+    --gold: #d4a017;
+    --plum: #6b3a4f;
+    --sky: #345876;
+  }
+
+  /* Artists = kincha gold-leaf on lacquer */
+  [data-tab="artists"] {
+    --paper: #1a1612;
+    --paper-2: #221d18;
+    --paper-3: #2c251e;
+    --rule: #d4b070;
+    --ink: #f0dca8;
+    --ink-2: #d4b070;
+    --muted: #a08858;
+    --dim: #6e5c3a;
+    --seal: #d4a017;       /* gold leaf */
+    --ember: #c1272d;
+    --moss: #9aaa6a;
+    --gold: #e8c060;
+    --plum: #c089a0;
+    --sky: #8eb0d2;
+  }
+
+  /* Smooth tab transitions */
+  body, header, section, footer, div, span, button, a {
+    transition: background-color .35s ease, color .35s ease, border-color .35s ease;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: var(--paper); }
+  body {
+    font-family: 'Inter', sans-serif;
+    color: var(--ink);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* asanoha hemp-leaf pattern, very subtle */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.05;
+    background-image:
+      radial-gradient(circle at 0 0, rgba(20,18,14,0.4) 0.5px, transparent 1px),
+      radial-gradient(circle at 24px 24px, rgba(20,18,14,0.4) 0.5px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  [data-theme="midnight"] body::before { opacity: 0.08; }
+
+  ::selection { background: var(--ink); color: var(--paper); }
+
+  #root { position: relative; z-index: 2; }
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail" data-bg-color="#f0e8d6">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#f0e8d6"/>
+    <rect x="540" y="280" width="120" height="120" fill="#c1272d" transform="rotate(-3 600 340)"/>
+    <text x="600" y="380" text-anchor="middle" font-family="serif" font-size="80" font-weight="700" fill="#f0e8d6" transform="rotate(-3 600 340)">聴</text>
+    <text x="600" y="490" text-anchor="middle" font-family="serif" font-size="46" font-weight="600" fill="#14120e">SoundSage</text>
+    <text x="600" y="530" text-anchor="middle" font-family="serif" font-size="18" letter-spacing="8" fill="#c1272d">音盤録</text>
+  </svg>
+</template>
+<div id="root"></div>
+
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="wave.jsx"></script>
+<script type="text/babel" src="app.jsx"></script>
+</body>
+</html>
