@@ -35,17 +35,39 @@ const nextConfig = {
             value: 'max-age=31536000; includeSubDomains; preload',
           },
           {
-            // Phase 7: tighten by removing 'unsafe-inline'/'unsafe-eval' once
-            // Next.js nonce strategy is configured.
+            // Production CSP. Two notable concessions remain:
+            //   • 'unsafe-inline' on script-src is still here because
+            //     Next.js App Router injects inline bootstrap scripts
+            //     (RSC payload, route data) without a nonce hook in v14.
+            //     Migrating to a per-request nonce via middleware is the
+            //     follow-up; until that's wired, 'unsafe-inline' stays.
+            //   • 'unsafe-inline' on style-src covers the inline-style
+            //     props the dashboard uses heavily.
+            // 'unsafe-eval' has been removed — the production bundle
+            // does not require it and removing it kills the largest XSS
+            // amplifier we had set.
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' data: https://fonts.gstatic.com",
               "img-src 'self' data: https://i.scdn.co https://lh3.googleusercontent.com",
-              "connect-src 'self'",
+              // connect-src is what XHR / fetch / WebSocket / EventSource
+              // get evaluated against. We need:
+              //   • Spotify API for the now-playing widget polling.
+              //   • Spotify accounts for the OAuth callback handshake.
+              //   • Sentry's wildcard ingest so error reports go through.
+              "connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://*.ingest.sentry.io https://*.sentry.io",
+              // Block embedding entirely — nothing in this app should
+              // render inside an iframe.
               "frame-ancestors 'none'",
+              // Web Workers (Sentry may spawn one for replay/profiling).
+              "worker-src 'self' blob:",
+              // Disallow plugins/embed (defense in depth).
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self' https://accounts.google.com https://accounts.spotify.com",
             ].join('; '),
           },
         ],

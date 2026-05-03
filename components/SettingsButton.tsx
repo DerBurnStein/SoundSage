@@ -62,6 +62,12 @@ export function SettingsButton() {
   //   'pending' — request in flight; both buttons disabled.
   const [discStage, setDiscStage] =
     useState<'idle' | 'confirm' | 'pending'>('idle');
+
+  // Delete-account flow has the same three stages plus a typed-text gate
+  // ("type DELETE") inside the confirm step — high-friction by design,
+  // since the action cascades through every row tied to this user.
+  const [delStage, setDelStage] =
+    useState<'idle' | 'confirm' | 'pending'>('idle');
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside click + Escape so the popover behaves like a normal menu.
@@ -153,6 +159,22 @@ export function SettingsButton() {
       setTimeout(tick, 2_000);
     };
     setTimeout(tick, 2_000);
+  }
+
+  async function handleDeleteAccount() {
+    setDelStage('pending');
+    try {
+      const r = await fetch('/api/account', { method: 'DELETE' });
+      if (r.ok || r.status === 204) {
+        // Account row is gone; sign the user out of the now-orphaned
+        // session and bounce them home.
+        await signOut({ callbackUrl: '/' });
+      } else {
+        setDelStage('confirm');
+      }
+    } catch {
+      setDelStage('confirm');
+    }
   }
 
   async function handleDisconnect() {
@@ -380,6 +402,43 @@ export function SettingsButton() {
                     Sign out
                   </button>
                 </div>
+
+                {/* Danger zone — visually offset so it can't be mistaken
+                    for the everyday actions above it. */}
+                <div
+                  style={{
+                    marginTop: 16,
+                    paddingTop: 12,
+                    borderTop: '1px dashed var(--rule)',
+                  }}
+                >
+                  {delStage === 'idle' ? (
+                    <button
+                      type="button"
+                      onClick={() => setDelStage('confirm')}
+                      style={{
+                        width: '100%',
+                        padding: '7px 10px',
+                        background: 'transparent',
+                        color: 'var(--muted)',
+                        border: '1px dashed var(--rule)',
+                        fontFamily: 'var(--font-sans)',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        letterSpacing: '0.04em',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Delete account
+                    </button>
+                  ) : (
+                    <DeleteAccountConfirm
+                      pending={delStage === 'pending'}
+                      onCancel={() => setDelStage('idle')}
+                      onConfirm={handleDeleteAccount}
+                    />
+                  )}
+                </div>
               </Section>
             </>
           )}
@@ -524,6 +583,133 @@ function DisconnectConfirm({
           }}
         >
           {pending ? 'Disconnecting…' : 'Disconnect'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAccountConfirm({
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  pending:   boolean;
+  onCancel:  () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const armed = typed.trim().toUpperCase() === 'DELETE';
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Delete account"
+      style={{
+        border: '1px solid var(--seal)',
+        background: 'color-mix(in srgb, var(--seal) 10%, transparent)',
+        padding: '12px 12px 10px',
+        display: 'grid',
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: 'var(--font-serif)',
+          fontSize: 13,
+          fontWeight: 500,
+          color: 'var(--ink)',
+          lineHeight: 1.35,
+        }}
+      >
+        Permanently delete your account?
+      </div>
+      <div
+        style={{
+          fontFamily: 'var(--font-mincho)',
+          fontStyle: 'italic',
+          fontSize: 12,
+          color: 'var(--muted)',
+          lineHeight: 1.45,
+        }}
+      >
+        This removes your sign-in, your Spotify connection, and every
+        listen we&apos;ve recorded for you. There is no undo. Type{' '}
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 600,
+            color: 'var(--ink)',
+            letterSpacing: '0.04em',
+          }}
+        >
+          DELETE
+        </span>{' '}
+        below to confirm.
+      </div>
+      <input
+        autoFocus
+        type="text"
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        placeholder="DELETE"
+        aria-label="Type DELETE to confirm"
+        spellCheck={false}
+        autoCapitalize="characters"
+        disabled={pending}
+        style={{
+          width: '100%',
+          padding: '8px 10px',
+          background: 'var(--paper)',
+          color: 'var(--ink)',
+          border: `1px solid ${armed ? 'var(--seal)' : 'var(--rule)'}`,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12,
+          letterSpacing: '0.06em',
+          outline: 'none',
+        }}
+      />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => {
+            setTyped('');
+            onCancel();
+          }}
+          disabled={pending}
+          style={{
+            flex: 1,
+            padding: '8px 10px',
+            background: 'transparent',
+            color: 'var(--ink)',
+            border: '1px solid var(--rule)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: pending ? 'not-allowed' : 'pointer',
+            opacity: pending ? 0.55 : 1,
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={!armed || pending}
+          style={{
+            flex: 1,
+            padding: '8px 10px',
+            background: armed && !pending ? 'var(--seal)' : 'transparent',
+            color: armed && !pending ? 'var(--paper)' : 'var(--dim)',
+            border: '1px solid var(--seal)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            cursor: armed && !pending ? 'pointer' : 'not-allowed',
+            opacity: armed && !pending ? 1 : 0.55,
+          }}
+        >
+          {pending ? 'Deleting…' : 'Delete account'}
         </button>
       </div>
     </div>
