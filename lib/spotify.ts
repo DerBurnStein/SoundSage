@@ -86,6 +86,34 @@ export async function spotifyGet<T>(path: string, accessToken: string): Promise<
   return res.json() as Promise<T>;
 }
 
+// ─── Track by ID ──────────────────────────────────────────────────────────────
+// /v1/tracks/{id} works under default quota (the multi-id /v1/tracks?ids=
+// endpoint is sometimes restricted, but the single endpoint is reliable).
+
+export interface SpotifyTrackDetails {
+  id: string;
+  name: string;
+  duration_ms: number;
+  artists: { id: string; name: string }[];
+  album: {
+    id: string;
+    name: string;
+    images: { url: string; width: number; height: number }[];
+  };
+}
+
+export async function getTrackById(
+  id: string,
+  accessToken: string
+): Promise<SpotifyTrackDetails | null> {
+  try {
+    return await spotifyGet<SpotifyTrackDetails>(`/tracks/${id}`, accessToken);
+  } catch (err) {
+    if (String(err).includes('404')) return null;
+    throw err;
+  }
+}
+
 // ─── Artist by ID ─────────────────────────────────────────────────────────────
 // /v1/artists/{id} is the single-artist endpoint. Distinct from the multi-id
 // /v1/artists?ids=... which is Extended-Quota-only. The single endpoint

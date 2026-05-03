@@ -2,6 +2,7 @@ import { db } from './db';
 import { ensureFreshToken } from './spotify-tokens';
 import { spotifyGet } from './spotify';
 import { redis } from './redis';
+import { invalidatePrefix } from './cache';
 import logger from './logger';
 
 // ─── Spotify response shapes (richer than the shared type — includes album) ───
@@ -12,6 +13,7 @@ interface RichTrack {
   duration_ms: number;
   artists: { id: string; name: string }[];
   album: {
+    id: string;
     name: string;
     images: { url: string; width: number; height: number }[];
   };
@@ -136,6 +138,10 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
   // Append to Redis sync log (last 5 entries per user)
   appendSyncLog(userId, inserted, newCursor).catch(() => undefined);
 
+  // Invalidate cached stats for this user — they now have new events to count.
+  // Fire-and-forget; cache misses are cheap and a slow Redis shouldn't block.
+  invalidatePrefix(`stats:${userId}:`).catch(() => undefined);
+
   logger.info({ userId, inserted, cursor: newCursor.toISOString() }, 'Sync complete');
   return { inserted, cursor: newCursor, skipped: false };
 }
@@ -159,6 +165,7 @@ async function upsertMetadata(items: RichPlayHistoryItem[]) {
     artistNames: string[];
     artistIds: string[];
     albumName: string;
+    albumId: string;
     imageUrl: string | null;
     durationMs: number;
   }[] = [];
@@ -175,6 +182,7 @@ async function upsertMetadata(items: RichPlayHistoryItem[]) {
         artistNames: track.artists.map((a) => a.name),
         artistIds: track.artists.map((a) => a.id),
         albumName: track.album.name,
+        albumId: track.album.id,
         imageUrl: track.album.images[0]?.url ?? null,
         durationMs: track.duration_ms,
       });
@@ -200,6 +208,7 @@ async function upsertMetadata(items: RichPlayHistoryItem[]) {
           artistNames: t.artistNames,
           artistIds: t.artistIds,
           albumName: t.albumName,
+          albumId: t.albumId,
           imageUrl: t.imageUrl,
           durationMs: t.durationMs,
         },
