@@ -4,6 +4,23 @@ const { withSentryConfig } = require('@sentry/nextjs');
 const nextConfig = {
   output: 'standalone',
 
+  // `unzipper` statically references `@aws-sdk/client-s3` for an S3-streaming
+  // code path the app never exercises (we only feed it Buffers / file paths).
+  // Without this alias, webpack tries to resolve the SDK during build and
+  // fails — pulling in the real SDK would add ~10 MB to the server bundle
+  // for code that never runs. Aliasing to `false` makes webpack emit an
+  // empty module instead, which is safe because unzipper's S3 helper is
+  // unreachable from our call sites.
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.resolve.alias = {
+        ...(config.resolve.alias || {}),
+        '@aws-sdk/client-s3': false,
+      };
+    }
+    return config;
+  },
+
   async headers() {
     return [
       {

@@ -7,10 +7,12 @@ import { Caps, Display, Mono } from './primitives';
 export interface StatTile {
   /** Short caption above the number (e.g. "UNIQUE TRACKS") */
   label: string;
-  /** Pre-formatted display value (e.g. "1,247" or "8h 32m") */
-  value: string;
-  /** Optional small footnote rendered in mono below */
-  footnote?: string;
+  /** Display value. Accepts a pre-formatted string or any React node
+   *  (e.g. a `<TweenNumber>` so the digits roll on range changes). */
+  value: React.ReactNode;
+  /** Optional small footnote rendered in mono below. Also accepts a node
+   *  so footnote counts can animate too. */
+  footnote?: React.ReactNode;
   /** Optional accent color for the value (defaults to var(--ink)) */
   accent?: 'ink' | 'ember' | 'seal' | 'moss';
 }

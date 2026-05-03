@@ -47,45 +47,103 @@ export function quadrantOf(energy: number, valence: number): MoodQuadrantId {
 
 export function genreMood(name: string): MoodCoord {
   const n = name.toLowerCase();
-  // Bright (high energy, high valence)
-  if (/\b(dance|disco|funk|salsa|samba|reggaeton|edm|electro\s?pop|happy|party|tropical|afrobeats?)\b/.test(n))
+
+  // ─── Bright (high energy, high valence) ───────────────────────────────────
+  if (/\b(dance|disco|funk|salsa|samba|reggaeton|edm|electro\s?pop|happy|party|tropical|afrobeats?|big band|swing)\b/.test(n))
     return { energy: 0.85, valence: 0.85 };
-  if (/\b(pop|k-pop|j-pop|bubblegum)\b/.test(n))
-    return { energy: 0.75, valence: 0.8 };
-  // Restless (high energy, low valence)
-  if (/\b(metal|hardcore|punk|thrash|grindcore|black metal|death|industrial|grunge|emo|screamo)\b/.test(n))
-    return { energy: 0.92, valence: 0.22 };
-  if (/\b(garage rock|noise|post-punk|drum and bass|dnb|breakcore|hyperpop)\b/.test(n))
-    return { energy: 0.82, valence: 0.35 };
-  // Peaceful (low energy, high valence)
-  if (/\b(folk|bossa|acoustic|singer-songwriter|country|americana|chamber|gospel|lounge)\b/.test(n))
-    return { energy: 0.32, valence: 0.7 };
-  if (/\b(jazz|smooth jazz|soul|r&b|neo-soul|bedroom pop)\b/.test(n))
+  if (/\b(pop|k-?pop|j-?pop|bubblegum|teen pop|new wave|power pop|britpop)\b/.test(n))
+    return { energy: 0.72, valence: 0.78 };
+  if (/\b(synth-?pop|electro|nu-disco|future funk)\b/.test(n))
+    return { energy: 0.72, valence: 0.72 };
+
+  // ─── Restless (high energy, low valence) ─────────────────────────────────
+  if (/\b(metal|hardcore|thrash|grindcore|death\s?metal|black\s?metal|industrial|sludge|crust)\b/.test(n))
+    return { energy: 0.94, valence: 0.18 };
+  if (/\b(punk|post-punk|hardcore punk|emo|screamo|grunge|riot grrrl)\b/.test(n))
+    return { energy: 0.85, valence: 0.28 };
+  if (/\b(post-punk revival|coldwave|cold wave|dark\s?wave|gothic|goth\s?rock|witch house)\b/.test(n))
+    return { energy: 0.65, valence: 0.25 };
+  if (/\b(garage rock|noise|drum and bass|dnb|breakcore|hyperpop|drill|grime|trap metal)\b/.test(n))
+    return { energy: 0.82, valence: 0.32 };
+  if (/\b(math rock|post-hardcore|midwest emo|noise rock)\b/.test(n))
+    return { energy: 0.78, valence: 0.4 };
+
+  // ─── Peaceful (low energy, high valence) ─────────────────────────────────
+  if (/\b(folk|folk rock|indie folk|alt-?folk|freak folk|bossa|samba folk|tropicalia)\b/.test(n))
+    return { energy: 0.35, valence: 0.7 };
+  if (/\b(acoustic|singer-?songwriter|country|americana|alt-?country|bluegrass)\b/.test(n))
+    return { energy: 0.4, valence: 0.66 };
+  if (/\b(chamber|chamber pop|baroque pop|gospel|lounge|easy listening)\b/.test(n))
+    return { energy: 0.35, valence: 0.65 };
+  if (/\b(jazz|smooth jazz|soul|r&b|rnb|neo-?soul|bedroom pop|sophisti-pop)\b/.test(n))
     return { energy: 0.45, valence: 0.65 };
-  // Contemplative (low energy, low valence)
-  if (/\b(ambient|drone|new age|meditation|asmr)\b/.test(n))
-    return { energy: 0.18, valence: 0.4 };
-  if (/\b(classical|baroque|romantic|orchestral|piano|score|soundtrack)\b/.test(n))
-    return { energy: 0.4, valence: 0.45 };
-  if (/\b(lo-?fi|chillwave|chillhop|slowcore|shoegaze|dreampop|dream pop|sad)\b/.test(n))
-    return { energy: 0.32, valence: 0.38 };
-  if (/\bpost-rock\b/.test(n))
-    return { energy: 0.55, valence: 0.4 };
-  // Mid-energy, mid-valence broad categories
-  if (/\b(rock|alt rock|alternative|hard rock|prog)\b/.test(n))
-    return { energy: 0.7, valence: 0.5 };
+  if (/\b(yacht rock|soft rock|adult contemporary|piano pop)\b/.test(n))
+    return { energy: 0.4, valence: 0.6 };
+
+  // ─── Contemplative (low energy, low valence) ─────────────────────────────
+  if (/\b(ambient|drone|new age|meditation|asmr|isolationism)\b/.test(n))
+    return { energy: 0.16, valence: 0.4 };
+  if (/\b(classical|baroque|romantic|orchestral|piano|score|soundtrack|modern classical|minimalism|neo-?classical)\b/.test(n))
+    return { energy: 0.38, valence: 0.42 };
+  if (/\b(lo-?fi|chillwave|chillhop|slowcore|shoegaze|dream\s?pop|dreampop|sad|sadcore)\b/.test(n))
+    return { energy: 0.30, valence: 0.34 };
+  if (/\b(post-rock|ethereal wave|drone rock|space rock)\b/.test(n))
+    return { energy: 0.5, valence: 0.36 };
+  if (/\b(downtempo|trip-?hop|illbient|abstract hip hop)\b/.test(n))
+    return { energy: 0.4, valence: 0.38 };
+  if (/\b(witch house|darksynth|dark ambient|funeral|doom)\b/.test(n))
+    return { energy: 0.45, valence: 0.18 };
+  // Art rock + krautrock read as cerebral / textural — editorially
+  // contemplative even though they can sit a bit higher on energy.
+  if (/\b(art rock|krautrock)\b/.test(n))
+    return { energy: 0.45, valence: 0.4 };
+
+  // ─── Broader rock vocabulary (skews mid-energy, slightly cool) ──────────
+  if (/\b(prog(ressive)? rock|psychedelic rock|stoner rock|jam band)\b/.test(n))
+    return { energy: 0.65, valence: 0.45 };
+  if (/\b(hard rock|heavy psych|blues rock|southern rock|glam rock|arena rock)\b/.test(n))
+    return { energy: 0.72, valence: 0.5 };
+  if (/\b(rock|alt(ernative)?\s?rock|modern rock)\b/.test(n))
+    return { energy: 0.65, valence: 0.42 };
+
+  // ─── Indie umbrella (cooler than before — was over-represented) ──────────
+  if (/\b(indie folk|alt-?folk)\b/.test(n))
+    return { energy: 0.4, valence: 0.55 };
+  if (/\b(indie rock|garage indie)\b/.test(n))
+    return { energy: 0.6, valence: 0.42 };
+  if (/\b(indie pop|twee)\b/.test(n))
+    return { energy: 0.55, valence: 0.6 };
   if (/\bindie\b/.test(n))
-    return { energy: 0.55, valence: 0.55 };
-  if (/\b(electronic|techno|house|trance|synth|idm|ambient techno)\b/.test(n))
-    return { energy: 0.7, valence: 0.5 };
-  if (/\b(hip hop|hip-hop|rap|trap|drill|grime)\b/.test(n))
-    return { energy: 0.65, valence: 0.5 };
-  if (/\b(reggae|ska|dub)\b/.test(n))
-    return { energy: 0.55, valence: 0.65 };
-  if (/\bblues\b/.test(n))
     return { energy: 0.5, valence: 0.45 };
-  // Default — center
-  return { energy: 0.5, valence: 0.5 };
+
+  // ─── Electronic broad categories ────────────────────────────────────────
+  if (/\b(deep house|tech house|minimal techno|microhouse)\b/.test(n))
+    return { energy: 0.7, valence: 0.45 };
+  if (/\b(house|techno|trance|psy-?trance|hardstyle|acid)\b/.test(n))
+    return { energy: 0.78, valence: 0.55 };
+  if (/\b(idm|glitch|ambient techno)\b/.test(n))
+    return { energy: 0.55, valence: 0.4 };
+  if (/\b(electronic|electronica|synth)\b/.test(n))
+    return { energy: 0.6, valence: 0.45 };
+
+  // ─── Hip-hop / R&B / global ─────────────────────────────────────────────
+  if (/\b(boom bap|conscious hip-?hop|jazz rap|alternative hip-?hop)\b/.test(n))
+    return { energy: 0.55, valence: 0.5 };
+  if (/\b(hip-?hop|rap|trap|cloud rap|mumble rap)\b/.test(n))
+    return { energy: 0.65, valence: 0.45 };
+  if (/\b(reggae|roots reggae|dancehall|ska|dub)\b/.test(n))
+    return { energy: 0.55, valence: 0.65 };
+  if (/\b(latin|cumbia|bachata|reggaeton|tango|flamenco)\b/.test(n))
+    return { energy: 0.7, valence: 0.65 };
+  if (/\bworld|afro|highlife|kuduro|afrobeat\b/.test(n))
+    return { energy: 0.65, valence: 0.6 };
+  if (/\bblues\b/.test(n))
+    return { energy: 0.45, valence: 0.4 };
+
+  // ─── Default — slightly cool of centre so unknown genres don't all
+  //     stack into the bright quadrant by default. The trackMood layer
+  //     can still nudge them up via name keywords.
+  return { energy: 0.48, valence: 0.45 };
 }
 
 // ─── Track-level mood ────────────────────────────────────────────────────────
@@ -99,10 +157,10 @@ export function genreMood(name: string): MoodCoord {
 // The result is clamped to [0.02, 0.98] so points never sit exactly on a
 // quadrant boundary or on the chart's edges.
 
-const VALENCE_UP = /\b(love|happy|joy|sun|smile|dance|party|free|sweet|wonder|alive|shine|bright|good|together|laugh|play|gold|home)\b/;
-const VALENCE_DOWN = /\b(sad|cry|tears|alone|lost|broken|empty|cold|dark|hurt|miss|gone|sorry|blue|grey|gray|fade|ghost|fall|die|death|wound)\b/;
-const ENERGY_UP = /\b(fire|run|fight|loud|wild|mad|rage|burn|crash|wreck|riot|jump|hard|fast|kick|push|loud|bang|wreck|war)\b/;
-const ENERGY_DOWN = /\b(slow|sleep|night|quiet|calm|gentle|soft|drift|float|lull|ocean|river|silent|whisper|still|breathe|easy|haze|dream)\b/;
+const VALENCE_UP = /\b(love|happy|joy|sun|smile|dance|party|free|sweet|wonder|alive|shine|bright|good|together|laugh|play|gold|home|heart|hello|dream(?:ing)?|paradise|spring|forever|hope|honey|bloom|flower|warm|kiss)\b/;
+const VALENCE_DOWN = /\b(sad|cry|tears|alone|lost|broken|empty|cold|dark|hurt|miss|gone|sorry|blue|grey|gray|fade|ghost|fall|die|death|wound|black|shadow|funeral|grave|nothing|nobody|never|won't|cant|ache|pain|silence|drown|sink|end|over|leave|leaving|left|goodbye|farewell|bury|burn(?:ed)?)\b/;
+const ENERGY_UP = /\b(fire|run|fight|loud|wild|mad|rage|burn|crash|wreck|riot|jump|hard|fast|kick|push|bang|war|shake|rock|roar|scream|shout|chase|race|attack|smash|blast|storm|thunder|electric|alive|wake)\b/;
+const ENERGY_DOWN = /\b(slow|sleep|night|quiet|calm|gentle|soft|drift|float|lull|ocean|river|silent|whisper|still|breathe|easy|haze|dream|moon|fog|mist|cloud|snow|winter|sunday|home|rest|sigh|wait|wander)\b/;
 
 export interface TrackMoodInput {
   name:         string;
@@ -125,21 +183,32 @@ export function trackMood({ name, durationMs, artistGenres }: TrackMoodInput): M
     valence = sumV / artistGenres.length;
   }
 
-  // Step 2: track-name keyword nudges.
+  // Step 2: track-name keyword nudges. Deliberately heavier than the genre
+  // baseline so a single well-tuned word can pull a track out of its
+  // genre's default quadrant — e.g. an "indie rock" track called
+  // "Funeral" should land in contemplative, not bright.
   const lower = (name ?? '').toLowerCase();
-  if (VALENCE_UP.test(lower))   valence += 0.10;
-  if (VALENCE_DOWN.test(lower)) valence -= 0.14;
-  if (ENERGY_UP.test(lower))    energy  += 0.12;
-  if (ENERGY_DOWN.test(lower))  energy  -= 0.12;
+  if (VALENCE_UP.test(lower))   valence += 0.16;
+  if (VALENCE_DOWN.test(lower)) valence -= 0.20;
+  if (ENERGY_UP.test(lower))    energy  += 0.16;
+  if (ENERGY_DOWN.test(lower))  energy  -= 0.18;
 
-  // Step 3: duration heuristic.
+  // Step 3: duration heuristic. Long tracks (> 5min) skew sedate; very
+  // short tracks (< 2min) skew punky. Both pull harder than the previous
+  // values so duration actually moves the needle in the cloud.
   const minutes = durationMs / 60_000;
   if (minutes > 0) {
-    if (minutes < 2.5) {
+    if (minutes < 2) {
+      energy  += 0.08;
+      valence -= 0.04;
+    } else if (minutes < 2.5) {
       energy  += 0.05;
       valence -= 0.02;
-    } else if (minutes > 7) {
-      energy  -= 0.10;
+    } else if (minutes > 8) {
+      energy  -= 0.16;
+      valence -= 0.04;
+    } else if (minutes > 5) {
+      energy  -= 0.08;
     }
   }
 

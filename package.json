@@ -6,6 +6,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test tests/e2e/dashboard.spec.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -28,7 +30,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "stream-chain": "^3.6.1",
-    "stream-json": "^2.1.0",
+    "stream-json": "^1.9.1",
     "unzipper": "^0.12.3",
     "zod": "^4.4.2"
   },
@@ -43,6 +45,7 @@
     "pino-pretty": "^13.0.0",
     "prisma": "^5.22.0",
     "tsx": "^4.19.0",
-    "typescript": "5.6.3"
+    "typescript": "5.6.3",
+    "vitest": "^2.1.8"
   }
 }

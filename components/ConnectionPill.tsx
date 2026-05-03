@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSession, signOut } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
 
 // Inline SVG of Spotify's logo: green circle + three white sound-wave arcs.
 // Self-contained so we don't pull in @icons or asset bundling.
@@ -155,18 +155,17 @@ export function ConnectionPill() {
           </div>
         )}
 
-      {/* Google account avatar — click to sign out */}
-      <button
-        onClick={() => signOut({ callbackUrl: '/' })}
-        title={`Signed in as ${session?.user?.email ?? ''} — click to sign out`}
+      {/* Account avatar — purely identity, no longer a click-to-sign-out
+          target. Sign-out lives in the Settings popover (設) so the avatar
+          doesn't fire a destructive action on a casual click. */}
+      <div
+        title={session?.user?.email ?? ''}
         style={{
           width: 36,
           height: 36,
           borderRadius: 18,
           background: 'var(--ink)',
           color: 'var(--paper)',
-          border: 'none',
-          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -174,7 +173,6 @@ export function ConnectionPill() {
           fontWeight: 600,
           fontSize: 16,
           overflow: 'hidden',
-          padding: 0,
           flexShrink: 0,
         }}
       >
@@ -188,7 +186,7 @@ export function ConnectionPill() {
         ) : (
           name.charAt(0).toUpperCase()
         )}
-      </button>
+      </div>
 
     </div>
   );

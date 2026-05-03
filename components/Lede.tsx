@@ -8,8 +8,9 @@ import { Caps, Display, Mono, fmtMins } from './primitives';
 interface LedeProps {
   /** "PLAYS" / "MINUTES" / etc */
   eyebrow: string;
-  /** The big number itself, already formatted */
-  value: string;
+  /** The big number itself. Accepts a pre-formatted string or any React
+   *  node (e.g. a `<TweenNumber>` so the digits roll on range changes). */
+  value: React.ReactNode;
   /** Sub-line under the value, set in serif */
   subtitle: React.ReactNode;
   /** Right-rail readout — small mono text. Rendered above `aside`. */
@@ -38,11 +39,14 @@ export function Lede({ eyebrow, value, subtitle, readout, aside, loading }: Lede
           maxWidth: 1380,
           margin: '0 auto',
           display: 'grid',
-          // Number column shrinks to fit; aside flexes to fill remaining
-          // width. With a fixed-content left and flexible right, the gap
-          // between them stays bounded and the aside actually uses the
-          // available space instead of hugging the right edge.
-          gridTemplateColumns: aside ? 'auto minmax(0, 1fr)' : '1fr auto',
+          // Left column is locked at a stable minimum so the dividing rule
+          // between number and aside doesn't slide as the play-count
+          // value changes width across time-range tabs ("477" vs "5,115"
+          // vs "30,002" all sit within the same 420px slot now). It still
+          // expands for genuinely huge numbers via `minmax(_, auto)`.
+          gridTemplateColumns: aside
+            ? 'minmax(420px, auto) minmax(0, 1fr)'
+            : '1fr auto',
           alignItems: 'end',
           gap: 64,
         }}
@@ -52,7 +56,7 @@ export function Lede({ eyebrow, value, subtitle, readout, aside, loading }: Lede
           <Display
             size={108}
             weight={500}
-            style={{ display: 'block', marginTop: 12, color: 'var(--ink)' }}
+            style={{ display: 'block', marginTop: 12, color: 'var(--accent)' }}
           >
             {value}
           </Display>
@@ -137,12 +141,14 @@ export function describeListening(totalPlays: number, totalMs: number): {
 export interface LedeHighlight {
   /** Short editorial caption, e.g. "B — Top track" */
   kicker:   string;
-  /** Primary label (track name, artist name, genre name) */
-  name:     string;
+  /** Primary label (track name, artist name, genre name). Accepts a node
+   *  so numeric headlines can animate via `<TweenNumber>`. */
+  name:     React.ReactNode;
   /** Optional secondary line in italic mincho */
   byline?:  string;
-  /** Numeric stat (e.g. "214 plays", "32% of period") */
-  stat:     string;
+  /** Numeric stat. Accepts a pre-formatted string or any React node
+   *  (e.g. a `<TweenNumber>` so the digits roll on range changes). */
+  stat:     React.ReactNode;
   /** Optional visual progress bar 0..1 — used to give the panel a chart-like
    *  feel without needing a separate visualization component. */
   share?:   number;

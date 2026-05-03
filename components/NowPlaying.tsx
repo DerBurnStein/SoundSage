@@ -11,14 +11,23 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Caps, Mono, cleanTrackName, cleanAlbumName, pad2 } from './primitives';
 import type { NowPlayingResponse } from '@/app/api/spotify/currently-playing/route';
 
-const POLL_INTERVAL = 3_000;
-const ART_SIZE = 56;
+// Poll cadences:
+//   • FAST while music is playing (or recently was)
+//   • SLOW after IDLE_THRESHOLD of nothing-playing — saves API quota when
+//     the user has stopped listening but left the tab open. The tab returns
+//     to FAST as soon as something starts playing or the window regains
+//     focus (refetchOnWindowFocus triggers a fresh request, and a focus
+//     listener resets the idle timer so the next interval lookup uses FAST).
+const POLL_FAST       = 5_000;
+const POLL_SLOW       = 30_000;
+const IDLE_THRESHOLD  = 2 * 60 * 1000;
+const ART_SIZE        = 56;
 
 function formatTime(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -29,6 +38,31 @@ function formatTime(ms: number): string {
 
 export function NowPlaying() {
   const { status } = useSession();
+  const queryClient = useQueryClient();
+
+  // Cheap connection check so we don't poll currently-playing once the
+  // user has disconnected Spotify from the Settings menu. /api/spotify/
+  // connection is a single DB lookup and is allowed to go stale for
+  // minutes — the only thing that flips it is a user-initiated connect
+  // or disconnect, both of which trigger a hard reload.
+  const { data: connData } = useQuery<{ connected: boolean }>({
+    queryKey: ['spotify-connection'],
+    queryFn: async () => {
+      const r = await fetch('/api/spotify/connection');
+      if (!r.ok) return { connected: false };
+      return (await r.json()) as { connected: boolean };
+    },
+    enabled: status === 'authenticated',
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
+  const connected = connData?.connected ?? false;
+
+  // Records the last time the user was actively listening. Used by the
+  // dynamic refetchInterval to back off after IDLE_THRESHOLD of silence.
+  // Initialised to "now" so a freshly-mounted widget always polls FAST
+  // for the first IDLE_THRESHOLD window.
+  const lastActiveAtRef = useRef<number>(Date.now());
 
   const { data } = useQuery<NowPlayingResponse>({
     queryKey: ['now-playing'],
@@ -37,11 +71,40 @@ export function NowPlaying() {
       if (!r.ok) return { playing: false };
       return (await r.json()) as NowPlayingResponse;
     },
-    enabled: status === 'authenticated',
-    refetchInterval: POLL_INTERVAL,
+    enabled: status === 'authenticated' && connected,
+    // Function form so React Query re-evaluates the cadence after every
+    // poll based on the freshest "playing" / "idle" signal.
+    refetchInterval: (query) => {
+      const d = query.state.data as NowPlayingResponse | undefined;
+      if (d?.playing) return POLL_FAST;
+      const idleMs = Date.now() - lastActiveAtRef.current;
+      return idleMs > IDLE_THRESHOLD ? POLL_SLOW : POLL_FAST;
+    },
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
+
+  // When the API confirms playback, refresh the activity timestamp so the
+  // FAST cadence keeps running. (When playback stops we deliberately keep
+  // lastActiveAtRef where it is so the IDLE_THRESHOLD timer can age out.)
+  useEffect(() => {
+    if (data?.playing) lastActiveAtRef.current = Date.now();
+  }, [data?.playing]);
+
+  // On window focus: bump the activity timestamp and force an immediate
+  // refetch. Together this guarantees that returning to the tab always
+  // shows fresh state and resumes FAST polling for at least IDLE_THRESHOLD,
+  // regardless of how long the tab was idle.
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    function onFocus() {
+      lastActiveAtRef.current = Date.now();
+      queryClient.invalidateQueries({ queryKey: ['now-playing'] });
+    }
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [status, queryClient]);
 
   // Local progress ticker. Resets on each poll; advances 1s per second so
   // the progress bar reads smoothly between server updates.
@@ -62,7 +125,10 @@ export function NowPlaying() {
   if (status === 'unauthenticated') return null;
 
   const isPlaying =
-    status === 'authenticated' && data?.playing === true && data.track != null;
+    status === 'authenticated' &&
+    connected &&
+    data?.playing === true &&
+    data.track != null;
   const track = isPlaying ? data!.track! : null;
 
   const progressPct = isPlaying && track

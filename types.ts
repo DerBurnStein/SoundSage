@@ -9,11 +9,16 @@ export type TimeRange = '24h' | '7d' | '4w' | '6m' | '1y' | 'all';
 export type TabId = 'overview' | 'history' | 'patterns' | 'tracks' | 'artists';
 export type ThemeId = 'paper' | 'midnight';
 export type DensityId = 'compact' | 'regular' | 'roomy';
+export type AccentId = 'ink' | 'ember' | 'seal' | 'moss';
+export type NumberFormatId = 'grouped' | 'plain';
 
 export interface UserPrefs {
-  theme:   ThemeId;
-  density: DensityId;
-  showSync: boolean;
+  theme:        ThemeId;
+  density:      DensityId;
+  accent:       AccentId;
+  numberFormat: NumberFormatId;
+  reduceMotion: boolean;
+  showSync:     boolean;
 }
 
 // ─────────────────────────────────────────────────────

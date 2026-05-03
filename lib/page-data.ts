@@ -12,8 +12,14 @@ import { db } from './db';
 import { cached } from './cache';
 import type { ParsedRange } from './range';
 import { trackMood, quadrantOf, type MoodQuadrantId } from './mood';
+
+// historyWindow is a pure, framework-free helper — kept in its own module
+// so the unit tests can import it without booting the Prisma client. We
+// re-export so existing callers (app/history/page.tsx) keep working.
+export { historyWindow, type HistoryView, type HistoryWindow } from './history-window';
 import type {
   ActivityStats,
+  GenreStat,
   GenreStats,
   HourlyStats,
   OverviewStats,
@@ -240,13 +246,24 @@ export async function getHourly(
 
 interface WeeklyRow { week: Date; total_ms: number | null }
 
-export async function getWeekly(userId: string, tz: string): Promise<WeeklySpark> {
-  const now = new Date();
-  const start = new Date(now);
-  start.setUTCDate(start.getUTCDate() - 12 * 7);
+/**
+ * Trailing-N-weeks of listening minutes for the WeeklySpark chart.
+ * `weekCount` defaults to 12 (the original behaviour) but Overview /
+ * Patterns now pass higher counts for longer ranges via `weeksForRange`,
+ * so the spark adapts to the time-range picker.
+ */
+export async function getWeekly(
+  userId: string,
+  tz: string,
+  weekCount = 12
+): Promise<WeeklySpark> {
+  const safeCount = Math.max(2, Math.min(120, Math.floor(weekCount)));
+  const start = new Date();
+  start.setUTCDate(start.getUTCDate() - safeCount * 7);
 
   return cached<WeeklySpark>(
-    `stats:${userId}:weekly:${tz}`,
+    // weekCount in the key so different consumers don't stomp each other.
+    `stats:${userId}:weekly:v2:${safeCount}:${tz}`,
     300,
     async () => {
       const rows = await db.$queryRawUnsafe<WeeklyRow[]>(
@@ -272,7 +289,7 @@ export async function getWeekly(userId: string, tz: string): Promise<WeeklySpark
       const monShift = (day + 6) % 7;
       cursor.setUTCDate(cursor.getUTCDate() - monShift);
       cursor.setUTCHours(0, 0, 0, 0);
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < safeCount; i++) {
         const key = cursor.toISOString();
         weeks.push(minsByWeek.get(key) ?? 0);
         cursor.setUTCDate(cursor.getUTCDate() + 7);
@@ -280,6 +297,27 @@ export async function getWeekly(userId: string, tz: string): Promise<WeeklySpark
       return { weeks };
     }
   );
+}
+
+/**
+ * Maps a time range to the number of weeks the WeeklySpark should show.
+ * Short ranges (24h / 7d / 4w) keep the original 12-week trailing trend
+ * because anything narrower would shrink to too few bars. Longer ranges
+ * extend the trace so it fully covers the picker's window.
+ */
+export function weeksForRange(range: TimeRange): number {
+  switch (range) {
+    case '24h':
+    case '7d':
+    case '4w':
+      return 12;
+    case '6m':
+      return 26;
+    case '1y':
+      return 52;
+    case 'all':
+      return 78;
+  }
 }
 
 // ─── Genres ───────────────────────────────────────────────────────────────────
@@ -617,73 +655,8 @@ export async function getEventsBetween(
   });
 }
 
-/**
- * Resolves a History view slug to a [from, to) date window in UTC.
- * Weeks are Monday-anchored, evaluated in the user's local timezone.
- */
-export function historyWindow(
-  view: 'today' | 'yesterday' | 'this-week' | 'last-week',
-  tz: string
-): { from: Date; to: Date; label: string } {
-  // Compute "now in tz" by formatting via Intl, then re-parsing as a UTC date.
-  // Good enough for day-boundary math without pulling in date-fns.
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
-  const parts = fmt.formatToParts(new Date());
-  const get = (k: string) => Number(parts.find((p) => p.type === k)?.value ?? 0);
-  const localY = get('year'),  localM = get('month'),  localD = get('day');
-  // Local midnight today, expressed as a UTC instant offset by the tz.
-  // We round-trip by constructing a "local wall-clock" UTC date and finding
-  // its actual UTC instant using the same formatter (Newton-style one-step).
-  const todayLocalMidnightUTC = wallClockToUTC(localY, localM, localD, 0, tz);
-  const day = new Date(todayLocalMidnightUTC);
-  // Find Monday of this local week
-  const dow = new Date(localY, localM - 1, localD).getDay(); // 0=Sun..6=Sat
-  const sinceMon = (dow + 6) % 7;
-  const weekStartLocalMidnightUTC = new Date(todayLocalMidnightUTC);
-  weekStartLocalMidnightUTC.setUTCDate(weekStartLocalMidnightUTC.getUTCDate() - sinceMon);
-
-  const tomorrow = new Date(todayLocalMidnightUTC);
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-
-  const yesterday = new Date(todayLocalMidnightUTC);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-
-  const lastWeekStart = new Date(weekStartLocalMidnightUTC);
-  lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 7);
-
-  switch (view) {
-    case 'today':      return { from: day,                  to: tomorrow,                label: 'Today' };
-    case 'yesterday':  return { from: yesterday,            to: day,                     label: 'Yesterday' };
-    case 'this-week':  return { from: weekStartLocalMidnightUTC, to: tomorrow,           label: 'This week' };
-    case 'last-week':  return { from: lastWeekStart,        to: weekStartLocalMidnightUTC, label: 'Last week' };
-  }
-}
-
-/** Convert a local wall-clock (y,m,d,h) in tz to a UTC Date instant. */
-function wallClockToUTC(y: number, m: number, d: number, h: number, tz: string): Date {
-  // Construct as if it were UTC, then correct by the tz offset at that instant.
-  const naive = Date.UTC(y, m - 1, d, h, 0, 0);
-  const offset = tzOffsetMs(naive, tz);
-  return new Date(naive - offset);
-}
-
-function tzOffsetMs(utcMs: number, tz: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
-  const parts = dtf.formatToParts(new Date(utcMs));
-  const get = (k: string) => Number(parts.find((p) => p.type === k)?.value ?? 0);
-  const asUTC = Date.UTC(get('year'), get('month') - 1, get('day'),
-                         get('hour') === 24 ? 0 : get('hour'),
-                         get('minute'), get('second'));
-  return asUTC - utcMs;
-}
+// (`historyWindow` lives in lib/history-window.ts — unit-testable without
+//  pulling in the Prisma client. Re-exported above.)
 
 // ─── Tracks — recently added (first heard) ───────────────────────────────────
 
@@ -1046,7 +1019,10 @@ export async function getMoodPoints(
   limit = 300
 ): Promise<MoodPoint[]> {
   return cached<MoodPoint[]>(
-    `stats:${userId}:moodPoints:v1:${limit}`,
+    // v2 — bumped after broadening lib/mood.ts vocabulary and the trackMood
+    // keyword/duration weights. Invalidates v1 cache entries that were
+    // computed with the old, bright-biased mappings.
+    `stats:${userId}:moodPoints:v2:${limit}`,
     600,
     async () => {
       const playRows = await db.$queryRawUnsafe<{
@@ -1089,7 +1065,7 @@ export async function getMoodPoints(
         const artistGenres = t.artistIds.flatMap((id) => genresByArtist.get(id) ?? []);
         const m = trackMood({
           name:        t.name,
-          durationMs:  t.durationMs,
+          durationMs:  t.durationMs ?? 0,
           artistGenres,
         });
         points.push({

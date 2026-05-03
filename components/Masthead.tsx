@@ -1,17 +1,20 @@
 // SoundSage — Masthead (sticky header)
-// Includes: almanac strip, logo + hanko seal, connection pill, tab nav, time-range picker.
+// Includes: almanac strip, logo + hanko seal, now-playing, connection pill,
+// settings, tab nav, and time-range picker.
 //
-// In Next.js App Router, this lives inside a Client Component (nav state).
-// The sticky header uses `position: sticky; top: 0; z-index: 50`.
+// Responsive behaviour is driven by the `.masthead-*` classes defined in
+// globals.css — the inline styles set the maximalist desktop layout, and
+// CSS media queries strip pieces away as the viewport narrows.
 
 'use client';
 
-import { useTransition } from 'react';
+import { Suspense, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Mono, pad2 } from './primitives';
 import { ConnectionPill } from './ConnectionPill';
 import { NowPlaying } from './NowPlaying';
+import { SettingsButton } from './SettingsButton';
 import type { TabId, TimeRange } from '../types';
 
 // ─────────────────────────────────────────────────────
@@ -49,26 +52,26 @@ export function Masthead({ today }: MastheadProps) {
       position: 'sticky', top: 0, zIndex: 50,
     }}>
       {/* Almanac top bar */}
-      <div style={{
+      <div className="masthead-almanac-bar" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '8px 28px',
         borderBottom: '1px solid var(--rule)',
         fontFamily: 'var(--font-mono)', fontSize: 10,
         letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)',
       }}>
-        <span>Vol. III · No. 17 · Spring</span>
-        <span>聴 · A Listening Almanac · 録</span>
+        <span className="masthead-almanac-vol">Vol. III · No. 17 · Spring</span>
+        <span className="masthead-almanac-tagline">聴 · A Listening Almanac · 録</span>
         <span>{today}</span>
       </div>
 
       {/* Logo + now-playing + connection pill, all on one row */}
-      <div style={{
+      <div className="masthead-row" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '22px 28px 18px', gap: 24,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexShrink: 0 }}>
           {/* Hanko seal mark — 聴 = "to listen" */}
-          <div style={{
+          <div className="masthead-hanko" style={{
             width: 56, height: 56,
             background: 'var(--seal)', color: 'var(--paper)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -80,17 +83,17 @@ export function Masthead({ today }: MastheadProps) {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-              <span style={{
+              <span className="masthead-logo-name" style={{
                 fontFamily: 'var(--font-mincho)',
                 fontWeight: 600, fontSize: 40,
                 letterSpacing: '-0.02em', lineHeight: 1, color: 'var(--ink)',
               }}>SoundSage</span>
-              <span style={{
+              <span className="masthead-logo-kanji" style={{
                 fontFamily: 'var(--font-serif)', fontWeight: 500, fontSize: 13,
                 color: 'var(--seal)', letterSpacing: '0.5em',
               }}>音盤録</span>
             </div>
-            <span style={{
+            <span className="masthead-tagline" style={{
               color: 'var(--muted)', fontFamily: 'var(--font-mincho)',
               fontStyle: 'italic', fontSize: 14, fontWeight: 400,
             }}>
@@ -100,50 +103,82 @@ export function Masthead({ today }: MastheadProps) {
         </div>
 
         {/* Now-playing widget — fills the middle when active, collapses
-            to nothing when idle so the row stays clean. */}
-        <NowPlaying />
+            to nothing when idle so the row stays clean. Hidden below the
+            tablet breakpoint so the masthead doesn't crowd. The wrapper
+            centres the widget horizontally so its 506px-max card sits in
+            the middle of the available space rather than hugging the
+            logo on the left. */}
+        <div
+          className="masthead-now-playing"
+          style={{
+            flex: '1 1 auto',
+            minWidth: 0,
+            display: 'flex',
+            justifyContent: 'center',
+          }}
+        >
+          <NowPlaying />
+        </div>
 
         {/* Fixed-width right column so NowPlaying never shifts as the
             ConnectionPill cycles through its loading states. */}
         <div
+          className="masthead-right-rail"
           style={{
             flexShrink: 0,
             minWidth: 290,
             display: 'flex',
+            alignItems: 'center',
             justifyContent: 'flex-end',
+            gap: 12,
           }}
         >
           <ConnectionPill />
+          <SettingsButton />
         </div>
       </div>
 
       {/* Tab nav + time-range picker */}
-      <div style={{
+      <div className="masthead-nav-row" style={{
         display: 'flex', alignItems: 'stretch',
         borderTop: '1px solid var(--rule)', padding: '0 16px',
       }}>
-        {NAV_ITEMS.map((n, i) => (
-          <Link
-            key={n.id}
-            href={n.id === 'overview' ? '/' : `/${n.id}`}
-            style={{
-              border: 'none', textDecoration: 'none',
-              background: activeTab === n.id ? 'var(--ink)' : 'transparent',
-              color:      activeTab === n.id ? 'var(--paper)' : 'var(--ink)',
-              fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 500,
-              letterSpacing: '0.04em',
-              padding: '12px 18px',
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              borderRight: i < NAV_ITEMS.length - 1 ? '1px solid var(--rule)' : 'none',
-            }}
-          >
-            <Mono style={{ fontSize: 9, opacity: 0.6 }}>{pad2(i + 1)}</Mono>
-            {n.label}
-          </Link>
-        ))}
+        <div className="masthead-tabs" style={{ display: 'flex', minWidth: 0, overflowX: 'auto' }}>
+          {NAV_ITEMS.map((n, i) => (
+            <Link
+              key={n.id}
+              href={n.id === 'overview' ? '/' : `/${n.id}`}
+              style={{
+                border: 'none', textDecoration: 'none',
+                background: activeTab === n.id ? 'var(--ink)' : 'transparent',
+                color:      activeTab === n.id ? 'var(--paper)' : 'var(--ink)',
+                fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 500,
+                letterSpacing: '0.04em',
+                padding: '12px 18px',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                borderRight: i < NAV_ITEMS.length - 1 ? '1px solid var(--rule)' : 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Mono className="masthead-tab-num" style={{ fontSize: 9, opacity: 0.6 }}>{pad2(i + 1)}</Mono>
+              {n.label}
+            </Link>
+          ))}
+        </div>
 
         <div style={{ flex: 1 }} />
-        <TimeRangePicker />
+        {/* `display: flex` so the picker inside stretches to the nav row's
+            full height — without it the wrapper is a block and the buttons
+            collapse to text-line height inside a taller bar. */}
+        <div className="masthead-time-picker" style={{ display: 'flex' }}>
+          {/* Suspense satisfies Next's static-analysis check for the
+              useSearchParams() call inside TimeRangePicker. The fallback
+              is invisible — the picker renders inert until the URL
+              params hydrate, which happens on the same tick. */}
+          <Suspense fallback={<div />}>
+            <TimeRangePicker />
+          </Suspense>
+        </div>
       </div>
     </header>
   );
@@ -159,9 +194,6 @@ function TimeRangePicker() {
   const pathname     = usePathname();
   const [isPending, startTransition] = useTransition();
   const range        = (searchParams.get('range') ?? '4w') as TimeRange;
-  // The picker drives data on Overview, Patterns, Tracks index, and Artists
-  // index. It is inert on History (Recent Stream is always "latest") and on
-  // any destination view (where the view's own slug encodes the time window).
   const onRangeRoute = pathname === '/'
                     || pathname === '/patterns'
                     || pathname === '/tracks'
@@ -172,11 +204,6 @@ function TimeRangePicker() {
     if (inert) return;
     const p = new URLSearchParams(searchParams.toString());
     p.set('range', r);
-    // Wrap in startTransition so Next.js keeps the current UI visible while
-    // the new data fetches — instead of replacing the page with loading.tsx
-    // skeletons. This keeps DOM nodes mounted across the navigation, so
-    // CSS transitions on bar widths animate from old → new value smoothly
-    // rather than from a fresh mount.
     startTransition(() => {
       router.replace(`${pathname}?${p.toString()}`, { scroll: false });
     });
@@ -188,9 +215,6 @@ function TimeRangePicker() {
         display: 'flex',
         alignItems: 'stretch',
         borderLeft: '1px solid var(--rule)',
-        // Subtle visual signal that a range change is in flight. Doesn't
-        // disable the buttons — clicking again during pending just queues
-        // the next transition.
         opacity: isPending ? 0.6 : 1,
         transition: 'opacity 200ms ease',
       }}

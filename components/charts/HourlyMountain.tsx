@@ -48,22 +48,27 @@ function hourX(h: number): number {
   return PAD_L + (INNER_W / 24) * (h + 0.5);
 }
 
-// Smooth filled mountain path. Uses midpoint-quadratic smoothing — each
-// pair of consecutive data points gets a Bezier with the data point itself
-// as the control. Closed at the baseline.
+// Smooth filled mountain path using Catmull-Rom → cubic Bezier conversion.
+// Curve interpolates through every data point exactly so any dot drawn at a
+// data point sits on the visible silhouette (the prior midpoint-quadratic
+// smoothing passed through midpoints, leaving dots floating off the curve).
 function buildMountainPath(points: { x: number; y: number }[]): string {
   if (points.length === 0) return '';
   const first = points[0]!;
   const last = points[points.length - 1]!;
   let d = `M ${first.x} ${BASELINE} L ${first.x} ${first.y}`;
   for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i]!;
-    const b = points[i + 1]!;
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    d += ` Q ${a.x} ${a.y} ${mx} ${my}`;
+    const p0 = points[i - 1] ?? points[i]!;
+    const p1 = points[i]!;
+    const p2 = points[i + 1]!;
+    const p3 = points[i + 2] ?? p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   }
-  d += ` L ${last.x} ${last.y} L ${last.x} ${BASELINE} Z`;
+  d += ` L ${last.x} ${BASELINE} Z`;
   return d;
 }
 
@@ -263,9 +268,9 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
       >
         <defs>
           <linearGradient id="hm-ink" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="var(--ink)" stopOpacity="0.96" />
-            <stop offset="0.65" stopColor="var(--ink)" stopOpacity="0.85" />
-            <stop offset="1" stopColor="var(--ink)" stopOpacity="0.55" />
+            <stop offset="0" stopColor="var(--accent)" stopOpacity="0.96" />
+            <stop offset="0.65" stopColor="var(--accent)" stopOpacity="0.85" />
+            <stop offset="1" stopColor="var(--accent)" stopOpacity="0.55" />
           </linearGradient>
           <linearGradient id="hm-mist" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="var(--paper)" stopOpacity="0" />
@@ -287,7 +292,7 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
         {/* Sun/moon celestial path */}
         <path
           d={sunArcD}
-          stroke="var(--gold, #b8956a)"
+          stroke="var(--gold)"
           strokeWidth="0.75"
           strokeDasharray="2 5"
           fill="none"
@@ -300,7 +305,7 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
           textAnchor="middle"
           fontFamily="var(--font-mincho)"
           fontSize="18"
-          fill="var(--gold, #b8956a)"
+          fill="var(--gold)"
           opacity="0.85"
         >
           日
@@ -312,7 +317,7 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
           textAnchor="middle"
           fontFamily="var(--font-mincho)"
           fontSize="13"
-          fill="var(--gold, #b8956a)"
+          fill="var(--gold)"
           opacity="0.6"
         >
           月
@@ -323,7 +328,7 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
           textAnchor="middle"
           fontFamily="var(--font-mincho)"
           fontSize="13"
-          fill="var(--gold, #b8956a)"
+          fill="var(--gold)"
           opacity="0.6"
         >
           月
@@ -357,8 +362,12 @@ export function HourlyMountain({ data, loading }: HourlyMountainProps) {
           </g>
         )}
 
-        {/* Peak hanko — 峰 (summit) stamped above the peak hour */}
-        <g transform={`translate(${peakX}, ${peakY - 16}) rotate(-4)`}>
+        {/* Peak hanko — 峰 (summit) stamped above the peak hour. We clamp
+            the transform y so the rect never clips above the SVG top edge
+            when the peak bar reaches maximum height (the rect extends 13px
+            above the transform origin, so y must stay >= 30 to keep the
+            stamp inside the viewBox with a small breathing margin). */}
+        <g transform={`translate(${peakX}, ${Math.max(peakY - 16, 30)}) rotate(-4)`}>
           <rect
             x={-13}
             y={-13}

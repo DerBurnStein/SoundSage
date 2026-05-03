@@ -7,17 +7,19 @@
 // Labels thin out automatically when there are too many bars to fit, so a
 // 1-year view doesn't try to print 52 labels in a 700px-wide chart.
 //
-// Range-change animation: when the bar count changes, the bars+labels group
-// briefly applies a scaleX transform that matches the *previous* layout's
-// density, then animates to scale 1. Because the transform is centered on
-// the chart, bars at the edges fly outward (off the viewBox) on growth and
-// new edge bars fly inward — visually they "appear" from both the left and
-// right walls. On shrinking the inverse plays.
+// Range-change animation: bars are right-anchored — the most recent bucket
+// sits at the right edge and never moves. When the range grows, new older
+// buckets slide in from past the left edge as the layout's stepX
+// compresses to fit them all. When the range shrinks, the leftmost
+// surplus bars slide off-screen left while the visible bars expand to
+// the new layout's stepX. Same approach as WeeklySpark — the curve and
+// the bar chart now share the "scroll past the left edge" feel.
 
 'use client';
 
-import { useLayoutEffect, useRef, useState } from 'react';
-import { Caps, Mono, hourLabel } from '../primitives';
+import { useEffect, useRef, useState } from 'react';
+import { Caps, Mono, hourLabel, fmtMins } from '../primitives';
+import { useTheme } from '../ThemeProvider';
 import type { ActivityBucket } from '../../types';
 
 interface ActivityRibbonProps {
@@ -26,78 +28,215 @@ interface ActivityRibbonProps {
   loading?: boolean;
 }
 
-// Wider viewBox (5:1) so the chart stays in a reasonable vertical band
-// when stretched to full width. Outer container also caps max-width to
-// match HourlyMountain's editorial sizing.
 const W = 1400, H = 280, PAD_L = 48, PAD_R = 24, PAD_T = 20, PAD_B = 56;
 const INNER_W = W - PAD_L - PAD_R;
 const INNER_H = H - PAD_T - PAD_B;
 const BASELINE = PAD_T + INNER_H;
-const CHART_CX = PAD_L + INNER_W / 2;
 
-// Maximum number of bars we want to label horizontally before they collide.
 const MAX_LABELS = 14;
-
-const ZOOM_DURATION = 650;
+const ANIM_DURATION = 700;
 const BAR_DURATION  = 550;
 const EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+// CSS transitions for properties we DON'T drive frame-by-frame from the
+// rAF scale loop. `x` and `width` are owned by the loop (a CSS transition
+// on those would chase a moving target every frame and produce stutter),
+// so they're absent. `y` and `height` only change between data updates,
+// which is exactly the case where a CSS transition reads as a smooth
+// re-shape rather than a snap.
 const BAR_TRANSITION =
-  `x ${BAR_DURATION}ms ${EASING}, y ${BAR_DURATION}ms ${EASING}, ` +
-  `width ${BAR_DURATION}ms ${EASING}, height ${BAR_DURATION}ms ${EASING}, ` +
+  `y ${BAR_DURATION}ms ${EASING}, ` +
+  `height ${BAR_DURATION}ms ${EASING}, ` +
   `fill 0.12s`;
 
 export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
+  const { reduceMotion } = useTheme();
   const [hover, setHover] = useState<number | null>(null);
-  const groupRef = useRef<SVGGElement>(null);
-  const prevLenRef = useRef(data.length);
 
-  // useLayoutEffect runs synchronously after DOM mutations and *before* the
-  // browser paints, so we can imperatively snap the group's transform to
-  // the initial ratio (no transition) and immediately schedule the
-  // animation back to 1 (with transition). This avoids the wobble you get
-  // when the snap itself is animated by a state-driven CSS transition.
-  useLayoutEffect(() => {
-    const oldLen = prevLenRef.current;
-    const newLen = data.length;
-    const g = groupRef.current;
-    prevLenRef.current = newLen;
-    if (!g || oldLen === newLen || oldLen === 0 || newLen === 0) return;
+  // Renders `renderedBuckets`. On a SHRINK, we keep showing the OLD (longer)
+  // data while it slides off the left, then swap to the new shorter array
+  // at animation end. On a GROW, we swap to the new array immediately and
+  // let the new older-history bars slide in from beyond PAD_L as the
+  // chart's stepX compresses. Same right-anchored playbook as WeeklySpark.
+  const incomingProp = data;
+  const [renderedBuckets, setRenderedBuckets] = useState<ActivityBucket[]>(
+    () => incomingProp ?? []
+  );
+  const [scale, setScale] = useState(1);
+  // `interp` is true for exactly one render after a buckets-shape swap.
+  // While true, fresh bars render at heights *mapped from the previous
+  // render's positions* (their "from" values). Next frame we flip it off,
+  // bars re-render at their real target heights, and the CSS height
+  // transition catches the change — so 4w↔6m feels like a re-shape rather
+  // than a hard cut, even though the bucket keys are completely different.
+  const [interp, setInterp] = useState(false);
+  const animRafRef = useRef<number | null>(null);
+  const lastSeenRef = useRef<ActivityBucket[] | undefined>(incomingProp);
+  // Snapshot of the most recently *rendered* heights, used as the "from"
+  // values when the buckets array is replaced.
+  const prevHeightsRef = useRef<{ count: number; heights: number[] } | null>(null);
 
-    const ratio = newLen / oldLen;
-    // Step 1: kill the transition, set the snap scale instantly. The
-    // forced reflow commits this state before paint.
-    g.style.transition = 'none';
-    g.style.transform = `scaleX(${ratio})`;
-    void g.getBoundingClientRect();
-    // Step 2: re-enable the transition, animate back to identity scale.
-    g.style.transition = `transform ${ZOOM_DURATION}ms ${EASING}`;
-    g.style.transform = 'scaleX(1)';
-  }, [data.length]);
+  useEffect(() => {
+    if (incomingProp === lastSeenRef.current) return;
+    lastSeenRef.current = incomingProp;
+    const incoming = incomingProp ?? [];
 
-  if (loading || !data.length) return <ActivityRibbonSkeleton />;
+    if (animRafRef.current != null) {
+      cancelAnimationFrame(animRafRef.current);
+      animRafRef.current = null;
+    }
 
-  const max = Math.max(...data.map((d) => d.mins), 1);
-  const stepX = INNER_W / data.length;
-  const barW = stepX * 0.64;
-  const peakIdx = data.findIndex((d) => d.mins === max);
-  const halfRange = (data.length - 1) / 2;
+    const oldLen = renderedBuckets.length;
+    const newLen = incoming.length;
 
-  const labelStep = Math.max(1, Math.ceil(data.length / MAX_LABELS));
+    if (oldLen === newLen || oldLen <= 1 || newLen <= 1 || reduceMotion) {
+      setRenderedBuckets(incoming);
+      setScale(1);
+      setInterp(true);
+      return;
+    }
+
+    const start = performance.now();
+
+    if (newLen > oldLen) {
+      // GROW. Swap to new data immediately. Initial scale is newLen/oldLen
+      // so the visible spacing equals the OLD chart's stepX — the rightmost
+      // oldLen bars sit exactly where they were a frame ago, and the new
+      // older-history bars sit off-screen past the left edge. As scale
+      // unwinds toward 1 the bars compress inward and the new ones slide
+      // in from the left.
+      setRenderedBuckets(incoming);
+      setInterp(true);
+      const initial = newLen / oldLen;
+      setScale(initial);
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / ANIM_DURATION);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setScale(initial + (1 - initial) * eased);
+        if (t < 1) {
+          animRafRef.current = requestAnimationFrame(tick);
+        } else {
+          animRafRef.current = null;
+        }
+      };
+      animRafRef.current = requestAnimationFrame(tick);
+    } else {
+      // SHRINK. Keep rendering the OLD data; spread it out (scale > 1) so
+      // the rightmost newLen bars line up with the NEW layout's positions
+      // and the leftmost (oldLen-newLen) bars slide off past PAD_L. At
+      // animation end, swap to the new array invisibly.
+      const target = oldLen / newLen;
+      setScale(1);
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / ANIM_DURATION);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setScale(1 + (target - 1) * eased);
+        if (t < 1) {
+          animRafRef.current = requestAnimationFrame(tick);
+        } else {
+          setRenderedBuckets(incoming);
+          setInterp(true);
+          setScale(1);
+          setHover(null);
+          animRafRef.current = null;
+        }
+      };
+      animRafRef.current = requestAnimationFrame(tick);
+    }
+  }, [incomingProp, renderedBuckets.length, reduceMotion]);
+
+  // After a render that armed `interp`, flip it off next frame so the
+  // *next* render re-applies the target heights and the CSS height
+  // transition fires from the just-painted "from" heights to the targets.
+  useEffect(() => {
+    if (!interp) return;
+    const id = requestAnimationFrame(() => setInterp(false));
+    return () => cancelAnimationFrame(id);
+  }, [interp]);
+
+  // Snapshot the heights we actually rendered (resolved below as
+  // `renderHeights`) so the next shape change has a "from" lookup table.
+  // We only update the snapshot on settled renders so during a tween the
+  // snapshot stays anchored to the *target* layout, not the morph frames.
+  useEffect(() => {
+    if (interp) return;
+    prevHeightsRef.current = {
+      count: renderedBuckets.length,
+      heights: renderedBuckets.map((d) => {
+        const m = Math.max(...renderedBuckets.map((b) => b.mins), 1);
+        return (d.mins / m) * INNER_H;
+      }),
+    };
+  }, [renderedBuckets, interp]);
+
+  if (loading || !renderedBuckets.length) return <ActivityRibbonSkeleton />;
+
+  const buckets = renderedBuckets;
+  const max = Math.max(...buckets.map((d) => d.mins), 1);
+  // Hover indexes into the *prop* data — the user's mental model is "I'm
+  // pointing at my latest data", not "I'm pointing at whichever frozen
+  // shrink-state is on screen". Falls back to renderedBuckets if hover
+  // points past the end of the prop array (e.g. mid-shrink).
+  const hoverSrc = data[hover ?? -1] ?? buckets[hover ?? -1] ?? null;
+  const hoveredBucket = hover != null ? hoverSrc : null;
+
+  // Right-anchored layout. Most recent bucket = far right; older buckets
+  // step leftward by `stepX * scale`. During a length-change tween, scale
+  // smoothly compresses (grow) or stretches (shrink) the spacing.
+  const count = buckets.length;
+  const stepX = INNER_W / count;
+  const stepScaled = stepX * scale;
+  // Bar width tracks the visual spacing, NOT the raw stepX. During a
+  // shrink the rAF loop spreads bars apart (scale > 1) — pinning width to
+  // stepX keeps them narrow even though the gaps grow, which reads as
+  // "they never widen". With stepScaled, width grows in lockstep with the
+  // gaps and the chart breathes properly between layouts. There's no jump
+  // at swap either: scale*oldStepX at end of shrink === newStepX, so the
+  // post-swap render hits the same width.
+  const barW = stepScaled * 0.64;
+  const peakIdx = buckets.findIndex((d) => d.mins === max);
+
+  // Right-anchored layout. The most-recent bucket's right edge sits at
+  // (W - PAD_R), and older buckets step left from there by stepScaled.
+  // Critical: only the *spacing* scales with the tween — the rightmost
+  // bar's anchor stays glued to (W - PAD_R) regardless of scale, so the
+  // chart can't rubberband sideways during a length-change animation.
+  function barRightX(i: number): number {
+    return (W - PAD_R) - (count - 1 - i) * stepScaled;
+  }
+  function barCenterX(i: number): number {
+    return barRightX(i) - barW / 2;
+  }
+
+  // Target heights for the current buckets, computed once per render.
+  const targetHeights = buckets.map((d) => (d.mins / max) * INNER_H);
+
+  // "From" heights — used for exactly the render that follows a buckets-
+  // shape change. Map each new bar to a previous bar at the same fractional
+  // position, then carry that bar's height across as the starting value.
+  // The result: visual continuity from old layout to new, with the CSS
+  // height transition handling the morph on the next render.
+  const fromHeights: number[] | null =
+    interp && prevHeightsRef.current && !reduceMotion
+      ? buckets.map((_, i) => {
+          const prev = prevHeightsRef.current!;
+          if (prev.count <= 0) return targetHeights[i]!;
+          const p = count <= 1 ? 1 : i / (count - 1);
+          const i_old = Math.round(p * Math.max(0, prev.count - 1));
+          return prev.heights[i_old] ?? targetHeights[i]!;
+        })
+      : null;
+
+  const renderHeights = fromHeights ?? targetHeights;
+
+  const labelStep = Math.max(1, Math.ceil(count / MAX_LABELS));
   function shouldLabel(i: number): boolean {
     if (i === 0) return true;
-    if (i === data.length - 1) return true;
+    if (i === count - 1) return true;
     if (i === peakIdx) return true;
     return i % labelStep === 0;
   }
 
-  // Bar centre x for index i — centred chart layout (the data array's middle
-  // sits at CHART_CX, not at the left edge).
-  function barCenterX(i: number): number {
-    return CHART_CX + (i - halfRange) * stepX;
-  }
-
-  // Heading text picks the right phrasing per grain.
-  const peakBucket = data[peakIdx];
+  const peakBucket = buckets[peakIdx];
   const heading =
     peakBucket && grain === 'hour'
       ? `${hourLabel(new Date(peakBucket.t).getUTCHours())} was your loudest hour`
@@ -139,12 +278,64 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
               {heading.replace(primaryLabel(peakBucket!, grain), '').trim()}
             </h3>
           </div>
-          <Mono style={{ color: 'var(--dim)', fontSize: 10 }}>min · plays</Mono>
+          <div style={{ textAlign: 'right', minWidth: 140 }}>
+            <div
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: 26,
+                color: 'var(--ink)',
+                fontWeight: 500,
+                lineHeight: 1,
+              }}
+            >
+              {fmtMins(Math.round((hoveredBucket ?? peakBucket)?.mins ?? 0))}
+            </div>
+            <Mono
+              style={{
+                fontSize: 10,
+                color: 'var(--dim)',
+                letterSpacing: '0.1em',
+                marginTop: 4,
+                display: 'block',
+              }}
+            >
+              {hoveredBucket
+                ? `${primaryLabel(hoveredBucket, grain)} · LISTENED`
+                : peakBucket
+                ? `${primaryLabel(peakBucket, grain)} · PEAK · LISTENED`
+                : 'MIN · PLAYS'}
+            </Mono>
+            <div
+              style={{
+                fontFamily: 'var(--font-mincho)',
+                fontStyle: 'italic',
+                fontSize: 13,
+                color: 'var(--muted)',
+                marginTop: 6,
+                minHeight: '1em',
+              }}
+            >
+              {hoveredBucket
+                ? `${hoveredBucket.plays.toLocaleString()} plays`
+                : peakBucket
+                ? `${peakBucket.plays.toLocaleString()} plays`
+                : ''}
+            </div>
+          </div>
         </div>
 
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
-          {/* Y-axis guide lines + ticks (outside the scaling group so the
-              axis numbers don't squash horizontally during the zoom). */}
+          <defs>
+            {/* Clip plot contents to the inner chart area so bars sliding
+                past the left edge during a grow/shrink tween stay hidden
+                instead of bleeding into the y-axis labels. */}
+            <clipPath id="ar-plot">
+              <rect x={PAD_L} y={0} width={W - PAD_L - PAD_R} height={H} />
+            </clipPath>
+          </defs>
+
+          {/* Y-axis guide lines + ticks (outside the clip so the axis
+              labels render normally even while bars slide past). */}
           {[0, 0.5, 1].map((t) => {
             const y = PAD_T + (1 - t) * INNER_H;
             const v = Math.round(t * max);
@@ -173,25 +364,11 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
             );
           })}
 
-          {/* Bars + per-bar labels — wrapped in a scaling group whose origin
-              is the chart's horizontal centre. When data.length changes,
-              useLayoutEffect imperatively snaps the scale to (newLen/oldLen)
-              with no transition, then animates it back to 1. Edge bars go
-              beyond the viewBox during the snap and slide back in via the
-              transition — that's the "from both walls" effect. */}
-          <g
-            ref={groupRef}
-            style={{
-              transform: 'scaleX(1)',
-              transformOrigin: `${CHART_CX}px ${BASELINE}px`,
-              transformBox: 'view-box',
-              transition: `transform ${ZOOM_DURATION}ms ${EASING}`,
-            }}
-          >
-            {data.map((d, i) => {
+          <g clipPath="url(#ar-plot)">
+            {buckets.map((d, i) => {
               const cx = barCenterX(i);
               const x = cx - barW / 2;
-              const bh = (d.mins / max) * INNER_H;
+              const bh = renderHeights[i]!;
               const y = BASELINE - bh;
               const isHv = hover === i;
               const isPk = i === peakIdx;
@@ -200,16 +377,25 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
 
               return (
                 <g
-                  key={i}
+                  // Stable key tied to the bucket's timestamp — NOT the
+                  // index. With index keys, React reuses the same DOM node
+                  // for completely different buckets when the array length
+                  // changes (e.g. 6m → 1y), and CSS transitions on x/width
+                  // then animate every bar across the chart, producing the
+                  // rubberband. Stable keys mean each real bucket is one
+                  // DOM node for its lifetime: shared buckets stay put,
+                  // dropped buckets unmount cleanly, new buckets mount
+                  // fresh at their target position.
+                  key={d.t}
                   onMouseEnter={() => setHover(i)}
                   onMouseLeave={() => setHover(null)}
                   style={{ cursor: 'pointer' }}
                 >
                   {/* Transparent hit rect for easier hover */}
                   <rect
-                    x={cx - stepX / 2}
+                    x={cx - stepScaled / 2}
                     y={PAD_T}
-                    width={stepX}
+                    width={stepScaled}
                     height={INNER_H}
                     fill="transparent"
                     style={{ transition: BAR_TRANSITION }}
@@ -219,7 +405,7 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
                     y={y}
                     width={barW}
                     height={bh}
-                    fill={isPk ? 'var(--ember)' : isHv ? 'var(--moss-2)' : 'var(--ink)'}
+                    fill={isPk ? 'var(--ember)' : isHv ? 'var(--moss-2)' : 'var(--accent)'}
                     style={{ transition: BAR_TRANSITION }}
                   />
 

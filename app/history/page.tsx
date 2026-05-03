@@ -51,7 +51,7 @@ export default async function HistoryPage({ searchParams }: PageProps) {
           subtitle={`${events.length.toLocaleString()} plays in this window.`}
         />
         {events.length > 0 ? (
-          <RecentStream events={events} />
+          <RecentStream events={events} live={view === 'today'} />
         ) : (
           <EmptyView label={win.label} />
         )}

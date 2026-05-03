@@ -34,10 +34,38 @@ interface GenreBarProps {
 export function GenreBar({ data, loading }: GenreBarProps) {
   const [hover, setHover] = useState<number | null>(null);
 
-  if (loading || !data.length) {
+  if (loading) {
     return (
       <div style={{ padding: '24px 28px', borderRight: '1px solid var(--rule)', borderBottom: '1px solid var(--rule)' }}>
         <div style={{ height: 56, background: 'var(--paper-2)' }} />
+      </div>
+    );
+  }
+  if (!data.length) {
+    return (
+      <div style={{ padding: '24px 28px', borderRight: '1px solid var(--rule)', borderBottom: '1px solid var(--rule)' }}>
+        <div style={{ marginBottom: 14 }}>
+          <Caps>Fig. 三 — Genre composition</Caps>
+        </div>
+        <div
+          style={{
+            padding: '32px 24px',
+            textAlign: 'center',
+            border: '1px dashed var(--rule)',
+          }}
+        >
+          <p
+            style={{
+              fontFamily: 'var(--font-mincho)',
+              fontStyle: 'italic',
+              fontSize: 16,
+              color: 'var(--muted)',
+              lineHeight: 1.55,
+            }}
+          >
+            No genre signal yet — artist genres haven't been backfilled for this window.
+          </p>
+        </div>
       </div>
     );
   }

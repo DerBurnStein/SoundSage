@@ -6,6 +6,7 @@ import {
   getHourly,
   getGenres,
   getWeekly,
+  weeksForRange,
   getActivity,
   getWeekdayWeekend,
   getTimeOfDay,
@@ -72,7 +73,7 @@ export default async function PatternsPage({ searchParams }: PageProps) {
   const [hourly, genres, weekly, activity] = await Promise.all([
     getHourly(session.userId, parsedRange, tz),
     getGenres(session.userId, parsedRange, 12),
-    getWeekly(session.userId, tz),
+    getWeekly(session.userId, tz, weeksForRange(parsedRange.range)),
     getActivity(session.userId, parsedRange, grain, tz),
   ]);
 

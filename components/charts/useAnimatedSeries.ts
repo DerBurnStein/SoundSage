@@ -13,6 +13,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTheme } from '../ThemeProvider';
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -22,11 +23,16 @@ function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-export function useAnimatedSeries<T extends Record<string, unknown>>(
+// Constraint is `object` rather than `Record<string, unknown>`: callers
+// pass concrete shapes like `HourlyBucket` which don't carry a string
+// index signature, but spreading `...row` and reading `row[f]` is fine
+// because we only ever touch the explicitly-listed `fields`.
+export function useAnimatedSeries<T extends object>(
   data: T[],
   fields: (keyof T)[],
   durationMs = 600
 ): T[] {
+  const { reduceMotion } = useTheme();
   // Force re-render at each rAF tick.
   const [, force] = useState(0);
 
@@ -51,6 +57,14 @@ export function useAnimatedSeries<T extends Record<string, unknown>>(
     // Same reference — nothing to animate.
     if (data === targetRef.current) return;
 
+    // Reduce motion: snap to the new data, skip rAF entirely.
+    if (reduceMotion) {
+      currentRef.current = data;
+      targetRef.current = data;
+      force((n) => n + 1);
+      return;
+    }
+
     // Snapshot the current displayed values to interpolate from. This works
     // mid-animation too: if the user clicks a new range while a previous
     // animation is still running, the new tween starts from wherever the
@@ -65,7 +79,7 @@ export function useAnimatedSeries<T extends Record<string, unknown>>(
       const eased = easeOutCubic(t);
       currentRef.current = targetRef.current.map((row, i) => {
         const from = fromRef.current[i];
-        const next: Record<string, unknown> = { ...row };
+        const next = { ...row } as Record<string, unknown>;
         if (from) {
           for (const f of fields) {
             const a = from[f] as number | undefined;
@@ -93,7 +107,7 @@ export function useAnimatedSeries<T extends Record<string, unknown>>(
         rafRef.current = null;
       }
     };
-  }, [data, fields, durationMs]);
+  }, [data, fields, durationMs, reduceMotion]);
 
   return currentRef.current;
 }

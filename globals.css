@@ -30,32 +30,29 @@
   --font-mono:    'JetBrains Mono', ui-monospace, monospace;
   --font-serif:   'Noto Serif JP', serif;
   --font-mincho:  'Shippori Mincho', 'Noto Serif JP', serif;
+
+  /* Accent — the user-selectable highlight colour used by chart line
+     strokes, dots, and headline numbers. Defaults to ink so existing
+     visuals are unchanged unless the user opts in via Settings. */
+  --accent: var(--ink);
 }
 
-/* ─────────────────────────────────────────────────────
-   Midnight (sumi dark) theme
-   ───────────────────────────────────────────────────── */
-[data-theme="midnight"] {
-  --paper:   #14120e;
-  --paper-2: #1c1a14;
-  --paper-3: #25221a;
-  --rule:    #f0e8d6;
-  --ink:     #f0e8d6;
-  --ink-2:   #d4cdb8;
-  --muted:   #8c8676;
-  --dim:     #5e594d;
-  --moss:    #a8c08a;
-  --moss-2:  #becead;
-  --ember:   #e85a55;
-  --gold:    #d8b04a;
-  --plum:    #c089a0;
-  --sky:     #8eb0d2;
-  --seal:    #e85a55;
-}
+/* Accent picker — overrides --accent only. Components that want the
+   user-selectable highlight reach for var(--accent); everything else keeps
+   pulling from the per-tab palette as before. */
+[data-accent="ink"]   { --accent: var(--ink);   }
+[data-accent="ember"] { --accent: var(--ember); }
+[data-accent="seal"]  { --accent: var(--seal);  }
+[data-accent="moss"]  { --accent: var(--moss);  }
 
 /* ─────────────────────────────────────────────────────
    Per-tab subthemes
    Each tab sets data-tab on <html>; the page repaints.
+   These come BEFORE the midnight theme block below so that turning on
+   midnight cascades over them — otherwise (since `[data-tab=...]` and
+   `[data-theme=...]` selectors have equal specificity) the tab subtheme
+   would always win the cascade and the dark mode would never appear on
+   any non-Overview tab.
    ───────────────────────────────────────────────────── */
 
 /* Overview — washi default (no override needed) */
@@ -133,7 +130,119 @@
 }
 
 /* ─────────────────────────────────────────────────────
-   Density variants
+   Midnight (sumi dark) theme — PLACED AFTER tab subthemes so it wins
+   the cascade. This block is the *fallback* / Overview dark palette;
+   the per-tab compound selectors below override it for non-Overview
+   tabs so each one keeps its colour identity in midnight (Hokusai
+   blue, sakura wine, torii vermilion, gold leaf).
+   ───────────────────────────────────────────────────── */
+[data-theme="midnight"] {
+  --paper:   #14120e;
+  --paper-2: #1c1a14;
+  --paper-3: #25221a;
+  --rule:    #f0e8d6;
+  --ink:     #f0e8d6;
+  --ink-2:   #d4cdb8;
+  --muted:   #8c8676;
+  --dim:     #5e594d;
+  --moss:    #a8c08a;
+  --moss-2:  #becead;
+  --ember:   #e85a55;
+  --gold:    #d8b04a;
+  --plum:    #c089a0;
+  --sky:     #8eb0d2;
+  --seal:    #e85a55;
+}
+
+/* ─────────────────────────────────────────────────────
+   Per-tab midnight variants — preserve each tab's colour identity in
+   dark mode instead of surrendering to the generic sumi palette.
+   Compound `[data-theme=...][data-tab=...]` selectors have specificity
+   0,0,2,0 so they win over both the bare midnight block above (0,0,1,0)
+   and the light-mode tab subthemes (0,0,1,0).
+   ───────────────────────────────────────────────────── */
+
+/* History — Hokusai blue at night */
+[data-theme="midnight"][data-tab="history"] {
+  --paper:   #0d1b2c;
+  --paper-2: #14283f;
+  --paper-3: #1d3656;
+  --rule:    #6196b8;
+  --ink:     #cdd8e6;
+  --ink-2:   #a4b3c4;
+  --muted:   #788ca8;
+  --dim:     #506680;
+  --seal:    #6196b8;
+  --ember:   #d4a017;
+  --moss:    #2a5b7a;
+  --moss-2:  #4a7595;
+  --gold:    #e8c060;
+  --plum:    #1f4068;
+  --sky:     #6196b8;
+}
+
+/* Patterns — sakura wine at night */
+[data-theme="midnight"][data-tab="patterns"] {
+  --paper:   #1f0a14;
+  --paper-2: #2c1220;
+  --paper-3: #3a1c2e;
+  --rule:    #c8456c;
+  --ink:     #f5d2dc;
+  --ink-2:   #e0b6c2;
+  --muted:   #b08894;
+  --dim:     #7a5664;
+  --seal:    #e85a7d;
+  --ember:   #e85a7d;
+  --moss:    #9aaa6a;
+  --moss-2:  #b0bf80;
+  --gold:    #d4a017;
+  --plum:    #c089a0;
+  --sky:     #8eb0d2;
+}
+
+/* Tracks — torii vermilion at night */
+[data-theme="midnight"][data-tab="tracks"] {
+  --paper:   #1c0a06;
+  --paper-2: #2a140e;
+  --paper-3: #3a1d14;
+  --rule:    #d04528;
+  --ink:     #f0d8b8;
+  --ink-2:   #d4bc94;
+  --muted:   #a08868;
+  --dim:     #6e5840;
+  --seal:    #d04528;
+  --ember:   #d04528;
+  --moss:    #6b8050;
+  --moss-2:  #859c66;
+  --gold:    #e8c060;
+  --plum:    #6b3a4f;
+  --sky:     #6196b8;
+}
+
+/* Artists — gold leaf on lacquer (already dark in paper mode; midnight
+   keeps the same hierarchy with slightly deeper blacks so the gold sings) */
+[data-theme="midnight"][data-tab="artists"] {
+  --paper:   #100c08;
+  --paper-2: #18130e;
+  --paper-3: #221c14;
+  --rule:    #d4b070;
+  --ink:     #f0dca8;
+  --ink-2:   #d4b070;
+  --muted:   #a08858;
+  --dim:     #6e5c3a;
+  --seal:    #e8c060;
+  --ember:   #e85a55;
+  --moss:    #9aaa6a;
+  --moss-2:  #b0bf80;
+  --gold:    #e8c060;
+  --plum:    #c089a0;
+  --sky:     #8eb0d2;
+}
+
+/* ─────────────────────────────────────────────────────
+   Density variants — visible knob lives on the body's line-height +
+   font scaling. The CSS vars below stay defined for components that
+   want to opt in.
    ───────────────────────────────────────────────────── */
 :root {
   --density-pad-section: 56px 28px 40px;
@@ -146,6 +255,25 @@
 [data-density="roomy"] {
   --density-pad-section: 72px 36px 56px;
   --density-gap:         64px;
+}
+
+/* Density's visible knob is body-level typography. Charts and lists set
+   their own paddings inline for editorial reasons, and a blanket
+   `section { padding: ... !important }` rule double-stacks against
+   components that have inner-cell padding (StatStrip, RankList, etc.).
+   So density now lives purely in font-size + line-height — subtle, but
+   consistent across every component. */
+[data-density="compact"] body {
+  font-size: 15px;
+  line-height: 1.4;
+}
+[data-density="regular"] body {
+  font-size: 16px;
+  line-height: 1.5;
+}
+[data-density="roomy"] body {
+  font-size: 17px;
+  line-height: 1.62;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -183,6 +311,15 @@ body *, body *::before, body *::after {
   50%       { opacity: 0.4; }
 }
 
+/* Indeterminate sync-progress stripe — used by the Re-sync button while
+   the backend job runs. We don't get a real % so we sweep a translucent
+   ink fill across the button repeatedly until the poller sees a newer
+   `lastSyncAt`. */
+@keyframes sync-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%);  }
+}
+
 /* Suppress all transitions briefly on theme/tab change to prevent the
    palette-swap flash. Set by ThemeProvider on mount and on every route
    change, removed next frame. */
@@ -190,4 +327,84 @@ body *, body *::before, body *::after {
   transition: none !important;
   animation-duration: 0s !important;
   animation-delay: 0s !important;
+}
+
+/* Reduce-motion preference — kills CSS transitions and keyframe animations
+   site-wide. JS-driven rAF tweens (TweenNumber, chart range animations)
+   read the same flag from ThemeProvider and snap to final values instead
+   of interpolating. */
+[data-reduce-motion="true"], [data-reduce-motion="true"] * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ─────────────────────────────────────────────────────
+   Masthead — responsive collapses
+   The desktop layout is set inline in Masthead.tsx; these media queries
+   strip away pieces as the viewport narrows so the header stays usable
+   on tablets and phones without breaking the editorial feel.
+   ───────────────────────────────────────────────────── */
+
+/* Below 1100px: the secondary kanji + tagline are decorative; drop them
+   so the logo block can shrink to just the wordmark. */
+@media (max-width: 1100px) {
+  .masthead-logo-kanji,
+  .masthead-tagline,
+  .masthead-almanac-tagline {
+    display: none;
+  }
+}
+
+/* Below 900px: hide NowPlaying. The tab nav + connection pill + settings
+   all need horizontal space; the now-playing block is the most
+   space-greedy and least essential at small widths. */
+@media (max-width: 900px) {
+  .masthead-now-playing {
+    display: none !important;
+  }
+  .masthead-right-rail {
+    min-width: 0 !important;
+  }
+}
+
+/* Below 720px: the time-range picker disappears and tab nav numbers
+   collapse so the bottom row fits comfortably. The almanac strip's
+   font shrinks to keep the edition + date readable. */
+@media (max-width: 720px) {
+  .masthead-time-picker {
+    display: none;
+  }
+  .masthead-tab-num {
+    display: none !important;
+  }
+  .masthead-almanac-bar {
+    font-size: 9px !important;
+    padding: 6px 16px !important;
+  }
+  .masthead-row {
+    padding: 16px 16px 12px !important;
+    gap: 12px !important;
+  }
+  .masthead-nav-row {
+    padding: 0 8px !important;
+  }
+  .masthead-logo-name {
+    font-size: 28px !important;
+  }
+}
+
+/* Below 480px: the almanac volume label is decorative; the date + 聴
+   stamp + tab nav are the essentials. */
+@media (max-width: 480px) {
+  .masthead-almanac-vol {
+    display: none;
+  }
+  .masthead-hanko {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 22px !important;
+  }
+  .masthead-logo-name {
+    font-size: 22px !important;
+  }
 }

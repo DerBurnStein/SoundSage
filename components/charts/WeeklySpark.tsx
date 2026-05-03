@@ -1,23 +1,116 @@
 // SoundSage — WeeklySpark
-// Editorial 12-week ribbon chart. Reads as the season's flow:
-// 12週の軌跡 (twelve-week trace).
+// Editorial multi-week ribbon chart. Reads as the season's flow.
+// Trailing-N weeks where N is driven by the time-range picker via
+// weeksForRange() in lib/page-data.ts (12 for short ranges, 26 for 6m,
+// 52 for 1y, 78 for all). Heading + label thinning + the kanji prefix
+// adapt to the count so the chart reads cleanly at any size.
 //
 // Layout:
-//   • Smooth ink curve through 12 weekly minute totals
+//   • Smooth ink curve through N weekly minute totals
 //   • Soft area fill underneath (gradient fade)
-//   • Faint vertical stems at each week tick
+//   • Faint vertical stems at each week tick (hidden at high counts)
 //   • Solid ink dots on each week, with the most-recent week in ember
 //   • Peak week stamped with a 峰 hanko above its node
 //   • Faint dashed trend line (linear regression)
-//   • Week-start dates along the bottom
+//   • Week-start dates along the bottom (thinned at high counts)
 //   • Right-rail stats: total / weekly average / peak
 //   • Hover anywhere → vertical drop-line + scaled dot + floating tooltip
 
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Caps, Mono, fmtMins } from '../primitives';
+import { useTheme } from '../ThemeProvider';
 import type { WeeklySpark as WeeklySparkData } from '../../types';
+
+// ─── useAnimatedWeeks ────────────────────────────────────────────────────────
+// Right-aligned, zero-padded animation for the trailing-N-weeks data:
+//
+//   - When the array length grows (4w → 6m), new entries are *older*
+//     history that didn't exist before. We pad the previous array on the
+//     LEFT with zeros so the new bars grow up from the baseline rather
+//     than popping in at full height.
+//   - When the array shrinks, we trim the leftmost old entries.
+//   - In both cases, the current-week (rightmost) bar is paired with the
+//     prior current-week bar across the transition, so its value lerps
+//     smoothly instead of jumping to whatever was at the same index in
+//     the old smaller array.
+//
+// The generic useAnimatedSeries hook is left-aligned by index, which
+// pairs unrelated time periods when the count changes — that was the
+// "only half of the graph interpolates" bug.
+function useAnimatedWeeks(weeks: number[], duration = 700, reduceMotion = false): number[] {
+  const [, force] = useState(0);
+  const currentRef = useRef<number[]>(weeks);
+  const fromRef    = useRef<number[]>(weeks);
+  const targetRef  = useRef<number[]>(weeks);
+  const startRef   = useRef(0);
+  const rafRef     = useRef<number | null>(null);
+  const firstRef   = useRef(true);
+
+  useEffect(() => {
+    if (firstRef.current) {
+      firstRef.current = false;
+      currentRef.current = weeks;
+      targetRef.current = weeks;
+      return;
+    }
+    if (weeks === targetRef.current) return;
+
+    // Reduce motion: snap to the new values, skip rAF entirely.
+    if (reduceMotion) {
+      currentRef.current = weeks.slice();
+      targetRef.current = weeks;
+      force((n) => n + 1);
+      return;
+    }
+
+    // Right-align fromRef to weeks: pad LEFT with zeros if growing,
+    // trim from LEFT if shrinking. Anchor: rightmost (current week).
+    const old = currentRef.current;
+    const newLen = weeks.length;
+    const oldLen = old.length;
+    let aligned: number[];
+    if (newLen > oldLen) {
+      aligned = new Array<number>(newLen - oldLen).fill(0).concat(old);
+    } else if (newLen < oldLen) {
+      aligned = old.slice(oldLen - newLen);
+    } else {
+      aligned = old.slice();
+    }
+
+    fromRef.current   = aligned;
+    targetRef.current = weeks;
+    startRef.current  = performance.now();
+
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - startRef.current) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      currentRef.current = targetRef.current.map((v, i) => {
+        const f = fromRef.current[i] ?? 0;
+        return f + (v - f) * eased;
+      });
+      force((n) => n + 1);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        rafRef.current = null;
+      }
+    };
+
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [weeks, duration, reduceMotion]);
+
+  return currentRef.current;
+}
 
 interface WeeklySparkProps {
   data: WeeklySparkData;
@@ -34,21 +127,34 @@ const INNER_W = W - PAD_L - PAD_R;
 const INNER_H = H - PAD_T - PAD_B;
 const BASELINE = PAD_T + INNER_H;
 
+// Catmull-Rom → cubic Bezier conversion. The previous midpoint-quadratic
+// smoothing only passed *through* the midpoints between consecutive data
+// points, so visually the dots (rendered at the data points) often floated
+// off the curve. This variant interpolates through every data point exactly.
+// Tension = 0.5 (uniform Catmull-Rom). Endpoints are duplicated to give the
+// first and last segments well-defined tangents.
 function smoothPath(pts: { x: number; y: number }[], close = false): string {
   if (pts.length === 0) return '';
   const first = pts[0]!;
+  const last = pts[pts.length - 1]!;
   let d = '';
   if (close) d += `M ${first.x} ${BASELINE} L ${first.x} ${first.y}`;
   else d += `M ${first.x} ${first.y}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i]!;
-    const b = pts[i + 1]!;
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    d += ` Q ${a.x} ${a.y} ${mx} ${my}`;
+  if (pts.length === 1) {
+    if (close) d += ` L ${first.x} ${BASELINE} Z`;
+    return d;
   }
-  const last = pts[pts.length - 1]!;
-  d += ` L ${last.x} ${last.y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i]!;
+    const p1 = pts[i]!;
+    const p2 = pts[i + 1]!;
+    const p3 = pts[i + 2] ?? p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  }
   if (close) d += ` L ${last.x} ${BASELINE} Z`;
   return d;
 }
@@ -65,13 +171,28 @@ function linearTrend(values: number[]): { slope: number; intercept: number } {
   return { slope, intercept };
 }
 
-function weekStartDate(weekIndex: number): Date {
-  // weekIndex 0 = oldest of the 12 weeks, 11 = current week. Start of the
-  // window is 12 weeks ago. We mirror getWeekly's UTC alignment so the
-  // labels match the data buckets.
+function weekStartDate(weekIndex: number, weekCount: number): Date {
+  // weekIndex 0 = oldest of the N weeks, weekCount-1 = current week. Start
+  // of the window is `weekCount` weeks ago. Mirrors getWeekly's UTC
+  // alignment so the labels match the data buckets.
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() - (11 - weekIndex) * 7);
+  d.setUTCDate(d.getUTCDate() - (weekCount - 1 - weekIndex) * 7);
   return d;
+}
+
+/** Editorial label for the count, e.g. 12 → "Twelve-week trace". */
+function traceLabel(n: number): string {
+  if (n <= 12) return 'Twelve-week trace';
+  if (n <= 26) return 'Half-year trace';
+  if (n <= 52) return 'Year-long trace';
+  return `${n}-week trace`;
+}
+
+function kanjiTrace(n: number): string {
+  if (n <= 12) return '12週の軌跡';
+  if (n <= 26) return '半年の軌跡';
+  if (n <= 52) return '一年の軌跡';
+  return `${n}週の軌跡`;
 }
 
 function shortDate(d: Date): string {
@@ -79,41 +200,204 @@ function shortDate(d: Date): string {
 }
 
 export function WeeklySpark({ data, loading }: WeeklySparkProps) {
+  const { reduceMotion } = useTheme();
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  if (loading || !data?.weeks?.length) return <Skeleton />;
+  // ─── Data + scale animation ────────────────────────────────────────────
+  // We render `renderedWeeks` (an internally-tracked array) so that on a
+  // SHRINK we can keep showing the old (longer) data while it slides off
+  // to the left, then swap to the new shorter array once the visible
+  // region matches the new chart's layout. On a GROW we swap to the new
+  // longer data immediately and let the new bars fly in from off-screen
+  // left as the scale unwinds.
+  // We track `data?.weeks` (which may be undefined) directly in
+  // lastSeenRef so we don't trigger spurious effect runs from inline
+  // `?? []` fallbacks that create fresh array refs each render.
+  const incomingProp = data?.weeks;
+  const [renderedWeeks, setRenderedWeeks] = useState<number[]>(
+    () => incomingProp ?? []
+  );
+  const [scale, setScale] = useState(1);
+  const animRafRef = useRef<number | null>(null);
+  const lastSeenRef = useRef<number[] | undefined>(incomingProp);
 
-  const weeks = data.weeks;
+  useEffect(() => {
+    if (incomingProp === lastSeenRef.current) return;
+    lastSeenRef.current = incomingProp;
+    const incoming = incomingProp ?? [];
+
+    // Cancel any in-flight animation so a rapid sequence of range clicks
+    // doesn't pile up overlapping rAF loops.
+    if (animRafRef.current != null) {
+      cancelAnimationFrame(animRafRef.current);
+      animRafRef.current = null;
+    }
+
+    const oldLen = renderedWeeks.length;
+    const newLen = incoming.length;
+    const duration = 700;
+
+    if (oldLen === newLen || oldLen <= 1 || newLen <= 1 || reduceMotion) {
+      setRenderedWeeks(incoming);
+      setScale(1);
+      return;
+    }
+
+    const start = performance.now();
+
+    if (newLen > oldLen) {
+      // GROW (e.g. 12 → 26). Swap data to NEW immediately. Scale starts
+      // at (newLen-1)/(oldLen-1) so the rightmost oldLen bars sit at the
+      // previous chart's stepX (the chart visually still looks like the
+      // old chart). Animate scale to 1 → new older-history bars on the
+      // left slide in from beyond the chart's left edge.
+      setRenderedWeeks(incoming);
+      const initial = (newLen - 1) / (oldLen - 1);
+      setScale(initial);
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setScale(initial + (1 - initial) * eased);
+        if (t < 1) {
+          animRafRef.current = requestAnimationFrame(tick);
+        } else {
+          animRafRef.current = null;
+        }
+      };
+      animRafRef.current = requestAnimationFrame(tick);
+    } else {
+      // SHRINK (e.g. 52 → 26). Keep rendering the OLD data. Scale
+      // animates from 1 to (oldLen-1)/(newLen-1) — bars spread out to
+      // the right, and the leftmost (oldLen-newLen) bars slide off-
+      // screen past PAD_L. At animation end, the rightmost newLen bars
+      // of OLD now sit at exactly the NEW chart's positions (and have
+      // identical values, since same time periods), so we can swap to
+      // the new array invisibly.
+      const target = (oldLen - 1) / (newLen - 1);
+      setScale(1);
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setScale(1 + (target - 1) * eased);
+        if (t < 1) {
+          animRafRef.current = requestAnimationFrame(tick);
+        } else {
+          // Continuity swap: old at scale=target visually equals new at
+          // scale=1, so this transition produces no visible jump.
+          setRenderedWeeks(incoming);
+          setScale(1);
+          setHover(null); // hover index might point to a now-removed bar
+          animRafRef.current = null;
+        }
+      };
+      animRafRef.current = requestAnimationFrame(tick);
+    }
+  }, [incomingProp, renderedWeeks.length, reduceMotion]);
+
+  // Right-aligned value lerp on top of whichever array we're rendering.
+  // Returns the same shape; values lerp where index alignment matches.
+  const live = useAnimatedWeeks(renderedWeeks, 700, reduceMotion);
+
+  // Guard on both sides — `renderedWeeks` lags `data.weeks` by one render
+  // when data first arrives, so we'd otherwise compute against an empty
+  // array for one frame.
+  if (loading || !data?.weeks?.length || !renderedWeeks.length) {
+    return <Skeleton />;
+  }
+
+  // On the very first render after a renderedWeeks length change, `live`
+  // hasn't realigned yet (effect runs after render). Apply the same
+  // right-anchor + zero-pad / trim logic the hook uses internally so the
+  // first frame already shows the "from" state, ready to lerp.
+  const oldLen = live.length;
+  const newLen = renderedWeeks.length;
+  const weeks =
+    oldLen === newLen
+      ? live
+      : oldLen < newLen
+        ? new Array<number>(newLen - oldLen).fill(0).concat(live)
+        : live.slice(oldLen - newLen);
   const max = Math.max(...weeks, 1);
-  const total = weeks.reduce((s, v) => s + v, 0);
+  const total = Math.round(weeks.reduce((s, v) => s + v, 0));
   const avg = Math.round(total / weeks.length);
-  const peakIdx = weeks.indexOf(Math.max(...weeks));
+  // Pin peakIdx to the rendered (target) data so the 峰 stamp doesn't
+  // dance sideways mid-tween whenever interpolated values cross.
+  const peakIdx = renderedWeeks.indexOf(Math.max(...renderedWeeks));
   const lastIdx = weeks.length - 1;
 
-  const stepX = INNER_W / Math.max(1, weeks.length - 1);
+  const weekCount = weeks.length;
+  const stepX = INNER_W / Math.max(1, weekCount - 1);
+  // x is anchored to the right edge (current week stays at W-PAD_R) and
+  // multiplied by `scale` so that during a length-change animation the
+  // bars start spread out at the *previous* chart's stepX and compress
+  // inward as scale settles to 1. New older-history bars on the left
+  // sit beyond the chart's visible viewBox at high scale and slide in.
+  const visualX = (i: number) =>
+    (W - PAD_R) - (weekCount - 1 - i) * stepX * scale;
   const points = weeks.map((v, i) => ({
-    x: PAD_L + i * stepX,
+    x: visualX(i),
     y: BASELINE - (v / max) * INNER_H,
     v,
-    date: weekStartDate(i),
+    date: weekStartDate(i, weekCount),
   }));
 
+  // Label thinning. At 12 weeks every other tick gets a date label, but a
+  // 78-week trace would crowd if we kept the same density — scale stride
+  // up so we land at roughly 8–14 visible labels regardless of count.
+  const labelStride = Math.max(1, Math.round(weekCount / 8));
+  // Stems behind dots get visually noisy past ~30 weeks; hide them at
+  // high counts so the curve dominates.
+  const showStems = weekCount <= 30;
+
   const trend = linearTrend(weeks);
+  // Trend line endpoints follow the leftmost / rightmost *visual* x so the
+  // line stays glued to the actual data points during the scale tween.
   const trendStart = {
-    x: PAD_L,
+    x: visualX(0),
     y: BASELINE - (Math.max(0, trend.intercept) / max) * INNER_H,
   };
   const trendEnd = {
-    x: PAD_L + (weeks.length - 1) * stepX,
+    x: visualX(weeks.length - 1),
     y:
       BASELINE -
       (Math.max(0, trend.intercept + trend.slope * (weeks.length - 1)) / max) *
         INNER_H,
   };
 
-  const linePath = smoothPath(points, false);
-  const fillPath = smoothPath(points, true);
+  // When the requested range exceeds available history, leading buckets are
+  // genuine zeros — but visually that reads as "you listened to nothing
+  // that week" rather than "your history doesn't reach back this far".
+  // Leading-edge floor: walk left-to-right and raise any leading point
+  // that would otherwise dip below its right neighbor up to the neighbor's
+  // height. Stops at the first point that's already at or above its
+  // successor (i.e., the curve naturally starts rising/flat there). This
+  // hides "falloff to zero" for tail-of-history ranges without introducing
+  // a hard threshold — the rule is applied identically in every range, so
+  // when the chart tweens between ranges the leftmost height lerps
+  // smoothly with no snap at the resting state.
+  const drawnPoints = points.map((p) => ({ ...p }));
+  for (let i = 0; i < drawnPoints.length - 1; i++) {
+    const cur = drawnPoints[i]!;
+    const nxt = drawnPoints[i + 1]!;
+    if (cur.y > nxt.y) {
+      cur.y = nxt.y;
+    } else {
+      break;
+    }
+  }
+  // Hover bubble + dots still need to know which leading buckets were
+  // synthesised vs real, so we can suppress dots over the held-flat zone.
+  let firstReal = 0;
+  while (
+    firstReal < drawnPoints.length - 1 &&
+    drawnPoints[firstReal]!.y !== points[firstReal]!.y
+  ) {
+    firstReal++;
+  }
+
+  const linePath = smoothPath(drawnPoints, false);
+  const fillPath = smoothPath(drawnPoints, true);
 
   function handleMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = svgRef.current;
@@ -125,7 +409,14 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
       setHover(null);
       return;
     }
-    const idx = Math.round((localX - PAD_L) / stepX);
+    // Inverted visualX so hover detection matches the scaled bar
+    // positions during the length-change tween. Clamps the answer to a
+    // valid bar index so a hover on an off-screen left bar (when scale
+    // is large) still resolves to bar 0.
+    const stepScaled = stepX * scale;
+    const idx = Math.round(
+      (weeks.length - 1) - (W - PAD_R - localX) / stepScaled
+    );
     setHover(Math.max(0, Math.min(weeks.length - 1, idx)));
   }
 
@@ -150,7 +441,7 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
           }}
         >
           <div>
-            <Caps>Fig. 五 — Twelve-week trace</Caps>
+            <Caps>Fig. 五 — {traceLabel(weekCount)}</Caps>
             <h3
               style={{
                 fontFamily: 'var(--font-serif)',
@@ -169,7 +460,7 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
                   color: 'var(--ink)',
                 }}
               >
-                12週の軌跡
+                {kanjiTrace(weekCount)}
               </span>
               <span style={{ color: 'var(--muted)' }}>·</span>{' '}
               <em>the season&apos;s flow</em>
@@ -189,7 +480,7 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
             <Stat label="Weekly avg" value={fmtMins(avg)} accent="muted" />
             <Stat
               label="Peak"
-              value={fmtMins(peakPt.v)}
+              value={fmtMins(Math.round(peakPt.v))}
               footnote={shortDate(peakPt.date)}
               accent="ember"
             />
@@ -206,9 +497,21 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
         >
           <defs>
             <linearGradient id="ws-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="var(--ink)" stopOpacity="0.22" />
-              <stop offset="1" stopColor="var(--ink)" stopOpacity="0" />
+              <stop offset="0" stopColor="var(--accent)" stopOpacity="0.22" />
+              <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
             </linearGradient>
+            {/* Clip the curve / fill / dots to the inner plot area so the
+                scale-animation can't bleed past the left edge while bars
+                slide in from beyond PAD_L. Padding on top/bottom keeps the
+                hanko stamp + axis labels outside the clip. */}
+            <clipPath id="ws-plot">
+              <rect
+                x={PAD_L}
+                y={0}
+                width={W - PAD_L - PAD_R}
+                height={H}
+              />
+            </clipPath>
           </defs>
 
           {/* Horizontal gridlines */}
@@ -237,19 +540,30 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
             stroke="var(--rule)"
           />
 
-          {/* Vertical stems — one per week, faint */}
-          {points.map((p, i) => (
-            <line
-              key={`stem-${i}`}
-              x1={p.x}
-              x2={p.x}
-              y1={BASELINE}
-              y2={p.y}
-              stroke="var(--ink)"
-              strokeOpacity={hover === i ? 0.4 : 0.12}
-              strokeWidth="1"
-            />
-          ))}
+          {/* Everything that's positioned by the scale-animated visualX
+              sits inside this clipped group so it can't bleed past PAD_L
+              while bars slide in from beyond the left edge during a grow
+              transition. */}
+          <g clipPath="url(#ws-plot)">
+          {/* Vertical stems — one per week, faint. Hidden at high week
+              counts so the curve dominates instead of becoming a picket
+              fence. The hovered week always renders its stem regardless. */}
+          {points.map((p, i) => {
+            if (i < firstReal) return null;
+            if (!showStems && hover !== i) return null;
+            return (
+              <line
+                key={`stem-${i}`}
+                x1={p.x}
+                x2={p.x}
+                y1={BASELINE}
+                y2={p.y}
+                stroke="var(--ink)"
+                strokeOpacity={hover === i ? 0.4 : 0.12}
+                strokeWidth="1"
+              />
+            );
+          })}
 
           {/* Filled area */}
           <path d={fillPath} fill="url(#ws-fill)" />
@@ -270,14 +584,15 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
           <path
             d={linePath}
             fill="none"
-            stroke="var(--ink)"
+            stroke="var(--accent)"
             strokeWidth="2"
             strokeLinejoin="round"
             strokeLinecap="round"
           />
 
           {/* Week dots */}
-          {points.map((p, i) => {
+          {drawnPoints.map((p, i) => {
+            if (i < firstReal) return null;
             const isHv = hover === i;
             const isLast = i === lastIdx;
             const r = isHv ? 5 : isLast ? 4 : 3;
@@ -287,13 +602,14 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
                 cx={p.x}
                 cy={p.y}
                 r={r}
-                fill={isLast ? 'var(--ember)' : 'var(--ink)'}
+                fill={isLast ? 'var(--ember)' : 'var(--accent)'}
                 stroke="var(--paper)"
                 strokeWidth={isLast || isHv ? 2 : 1}
                 style={{ transition: 'r 0.12s' }}
               />
             );
           })}
+          </g>{/* /clipped plot group */}
 
           {/* Peak hanko stamp — only render if peak week isn't the
               current week (which already has the ember dot) */}
@@ -345,7 +661,7 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
               />
               {/* Value bubble — smart-position so it doesn't escape edges */}
               {(() => {
-                const text = fmtMins(focused.v);
+                const text = fmtMins(Math.round(focused.v));
                 const dateText = shortDate(focused.date);
                 const bubbleW = 96;
                 const bubbleH = 38;
@@ -393,13 +709,13 @@ export function WeeklySpark({ data, loading }: WeeklySparkProps) {
             </g>
           )}
 
-          {/* Week labels along bottom */}
+          {/* Week labels along bottom — strided so they stay readable at
+              78-week traces. First / last / peak / hovered always render. */}
           {points.map((p, i) => {
             const isHv = hover === i;
             const isCurrent = i === lastIdx;
-            // Always show first, last, peak, and every other otherwise to
-            // avoid visual crowding at 12 ticks
-            const showLabel = isHv || isCurrent || i === 0 || i === peakIdx || i % 2 === 0;
+            const showLabel =
+              isHv || isCurrent || i === 0 || i === peakIdx || i % labelStride === 0;
             if (!showLabel) return null;
             return (
               <text

@@ -18,6 +18,43 @@ import { MOOD_QUADRANTS, type MoodQuadrantId } from '@/lib/mood';
 const TRANSITION = '500ms cubic-bezier(0.22, 1, 0.36, 1)';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SectionEmpty — shared "no data in this window" state for the pattern
+// charts that can plausibly receive a zero-row dataset (a fresh account,
+// a tiny range with no listening, etc.). Keeps the editorial caption +
+// dashed border so the page doesn't visually collapse.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SectionEmpty({ kicker, message }: { kicker: string; message: string }) {
+  return (
+    <section style={{ padding: '32px 28px 40px', borderBottom: '1px solid var(--rule)' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+        <Caps>{kicker}</Caps>
+        <div
+          style={{
+            marginTop: 18,
+            padding: '40px 24px',
+            textAlign: 'center',
+            border: '1px dashed var(--rule)',
+          }}
+        >
+          <p
+            style={{
+              fontFamily: 'var(--font-mincho)',
+              fontStyle: 'italic',
+              fontSize: 16,
+              color: 'var(--muted)',
+              lineHeight: 1.55,
+            }}
+          >
+            {message}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Weekday vs weekend
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -45,6 +82,15 @@ export function WeekdayWeekendChart({
   const weekdayShare = total > 0 ? weekdayPlays / total : 0;
   const weekendShare = total > 0 ? weekendPlays / total : 0;
   const max = Math.max(...byDay.map((d) => d.plays), 1);
+
+  if (total === 0) {
+    return (
+      <SectionEmpty
+        kicker="Fig. 一 — Days of the week"
+        message="No plays in this window yet — there's nothing to split."
+      />
+    );
+  }
 
   const focusedDay = hoverDay != null ? byDay[hoverDay] : null;
   const activeGroup: 'weekday' | 'weekend' | null = hoverGroup
@@ -135,7 +181,7 @@ export function WeekdayWeekendChart({
                       position: 'absolute',
                       left: 0, right: 0, bottom: 0,
                       height: `${pct}%`,
-                      background: isWeekend ? 'var(--ember)' : 'var(--ink)',
+                      background: isWeekend ? 'var(--ember)' : 'var(--accent)',
                       transition: `height ${TRANSITION}`,
                     }}
                   />
@@ -265,6 +311,15 @@ export function TimeOfDayChart({ morning, midday, evening, night, total }: TimeO
   const [hover, setHover] = useState<TodKey | null>(null);
   const counts: Record<TodKey, number> = { morning, midday, evening, night };
   const max = Math.max(morning, midday, evening, night, 1);
+
+  if (total === 0) {
+    return (
+      <SectionEmpty
+        kicker="Fig. 一 — Hours of the day"
+        message="No plays in this window yet — the day's rhythm hasn't formed."
+      />
+    );
+  }
   const focused = hover ? TOD_BANDS.find((b) => b.key === hover)! : null;
   const focusedCount = focused ? counts[focused.key] : 0;
   const focusedShare = total > 0 && focused ? focusedCount / total : 0;

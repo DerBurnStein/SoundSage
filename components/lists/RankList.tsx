@@ -18,7 +18,16 @@ interface TrackListProps {
   loading?: boolean;
 }
 export function TrackRankList({ title, kicker, items, loading }: TrackListProps) {
-  if (loading || !items.length) return <RankListSkeleton />;
+  if (loading) return <RankListSkeleton />;
+  if (!items.length) {
+    return (
+      <RankListEmpty
+        kicker={kicker}
+        title={title}
+        message="No tracks for this window yet."
+      />
+    );
+  }
   const max = Math.max(...items.map(i => i.plays));
   return (
     <RankListShell title={title} kicker={kicker} seeAllHref="/tracks">
@@ -53,7 +62,16 @@ interface ArtistListProps {
   loading?: boolean;
 }
 export function ArtistRankList({ title, kicker, items, loading }: ArtistListProps) {
-  if (loading || !items.length) return <RankListSkeleton />;
+  if (loading) return <RankListSkeleton />;
+  if (!items.length) {
+    return (
+      <RankListEmpty
+        kicker={kicker}
+        title={title}
+        message="No artists for this window yet."
+      />
+    );
+  }
   const max = Math.max(...items.map(i => i.plays));
   return (
     <RankListShell title={title} kicker={kicker} seeAllHref="/artists">
@@ -121,14 +139,14 @@ function RankRow({ rank, plays, max, children }: {
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--paper-2)')}
       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
     >
-      <Display size={28} weight={400} style={{ color: rank === 0 ? 'var(--ember)' : 'var(--ink)', lineHeight: 1 }}>
+      <Display size={28} weight={400} style={{ color: rank === 0 ? 'var(--ember)' : 'var(--accent)', lineHeight: 1 }}>
         {pad2(rank + 1)}
       </Display>
       <div style={{ minWidth: 0 }}>
         {children}
         {/* Relative play bar */}
         <div style={{ marginTop: 8, height: 2, background: 'var(--paper-3)', position: 'relative' }}>
-          <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: `${pct}%`, background: rank === 0 ? 'var(--ember)' : 'var(--ink)', transition: 'width 500ms cubic-bezier(0.22, 1, 0.36, 1)' }} />
+          <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: `${pct}%`, background: rank === 0 ? 'var(--ember)' : 'var(--accent)', transition: 'width 500ms cubic-bezier(0.22, 1, 0.36, 1)' }} />
         </div>
       </div>
       <div style={{ textAlign: 'right', minWidth: 80 }}>
@@ -145,6 +163,52 @@ function RankListSkeleton() {
       {[...Array(5)].map((_, i) => (
         <div key={i} style={{ height: 60, background: 'var(--paper-2)', marginBottom: 8, opacity: 1 - i * 0.15 }} />
       ))}
+    </div>
+  );
+}
+
+function RankListEmpty({
+  kicker, title, message,
+}: {
+  kicker:  string;
+  title:   string;
+  message: string;
+}) {
+  return (
+    <div style={{ padding: '24px 28px', borderBottom: '1px solid var(--rule)' }}>
+      <div style={{ marginBottom: 16 }}>
+        <Caps>{kicker}</Caps>
+        <h3
+          style={{
+            fontFamily: 'var(--font-serif)',
+            fontWeight: 400,
+            fontSize: 22,
+            marginTop: 6,
+            letterSpacing: '-0.01em',
+          }}
+        >
+          {title}
+        </h3>
+      </div>
+      <div
+        style={{
+          padding: '40px 24px',
+          textAlign: 'center',
+          border: '1px dashed var(--rule)',
+        }}
+      >
+        <p
+          style={{
+            fontFamily: 'var(--font-mincho)',
+            fontStyle: 'italic',
+            fontSize: 16,
+            color: 'var(--muted)',
+            lineHeight: 1.55,
+          }}
+        >
+          {message}
+        </p>
+      </div>
     </div>
   );
 }
