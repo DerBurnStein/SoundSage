@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Caps, Mono } from '../primitives';
+import { Caps, Mono, cleanTrackName } from '../primitives';
 import type { RecentEvent } from '../../types';
 
 interface RecentStreamProps {
@@ -64,7 +64,7 @@ export function RecentStream({ events, loading }: RecentStreamProps) {
               <div style={{
                 fontFamily: 'var(--font-serif)', fontSize: 15, fontWeight: 500,
                 color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>{ev.track.name}</div>
+              }}>{cleanTrackName(ev.track.name)}</div>
               <div style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--muted)' }}>
                 <em style={{ fontFamily: 'var(--font-mincho)', fontSize: 12 }}>
                   {ev.track.artists.map(a => a.name).join(', ')}

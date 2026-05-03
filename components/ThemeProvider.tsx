@@ -36,9 +36,17 @@ export function ThemeProvider({
 
   useEffect(() => {
     const root = document.documentElement;
+    // Suppress CSS transitions for one frame while we apply the theme/tab
+    // datasets on first mount. Otherwise every page nav animates the whole
+    // palette swap, which reads as a flash. After the next paint we let
+    // transitions resume.
+    root.classList.add('no-transitions');
     root.dataset.theme   = theme;
     root.dataset.density = density;
     root.dataset.tab     = tab;
+    requestAnimationFrame(() => {
+      root.classList.remove('no-transitions');
+    });
   }, [theme, density, tab]);
 
   return <>{children}</>;

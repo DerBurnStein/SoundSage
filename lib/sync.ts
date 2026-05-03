@@ -90,11 +90,17 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
     return { inserted: 0, cursor: account.cursor, skipped: false };
   }
 
+  // msPlayed is a best-effort estimate: Spotify's recently-played API does
+  // not return how much of the track was played, only that it was played
+  // (and Spotify only includes plays >=30s here). We assume full duration —
+  // accurate for the majority of plays, low-impact when wrong since most
+  // queries already aggregate by play count not millisecond precision.
+  // Extended-history imports (Phase 5) overwrite this with actual ms_played.
   const events = items.map((item) => ({
     userId,
     trackId: item.track.id,
     playedAt: new Date(item.played_at),
-    msPlayed: null as number | null,
+    msPlayed: item.track.duration_ms,
     source: 'recently_played' as const,
   }));
 
@@ -137,6 +143,15 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
 
   // Append to Redis sync log (last 5 entries per user)
   appendSyncLog(userId, inserted, newCursor).catch(() => undefined);
+
+  // Refine msPlayed for this user's recently-played events using the
+  // gap-to-next-play heuristic. The previously-most-recent event now has a
+  // "next" event so its ms_played can be inferred properly. Fire-and-forget.
+  import('./infer-msplayed')
+    .then(({ inferMsPlayedForUser }) => inferMsPlayedForUser(userId))
+    .catch((err) =>
+      logger.warn({ userId, err: String(err) }, 'msPlayed inference failed (non-critical)')
+    );
 
   // Invalidate cached stats for this user — they now have new events to count.
   // Fire-and-forget; cache misses are cheap and a slow Redis shouldn't block.

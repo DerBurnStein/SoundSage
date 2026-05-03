@@ -1,35 +1,14 @@
 import { NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/session';
 import { db } from '@/lib/db';
+import { getSpotifyConnection } from '@/lib/page-data';
+import { invalidatePrefix } from '@/lib/cache';
 import logger from '@/lib/logger';
 
 export async function GET(): Promise<NextResponse> {
   const { session, error } = await requireAuth();
   if (error) return error;
-
-  const account = await db.spotifyAccount.findUnique({
-    where: { userId: session.userId },
-    select: {
-      spotifyUserId: true,
-      lastSyncAt: true,
-      needsReconnect: true,
-      failureCount: true,
-      scopes: true,
-    },
-  });
-
-  if (!account) {
-    return NextResponse.json({ connected: false });
-  }
-
-  return NextResponse.json({
-    connected: true,
-    spotifyUserId: account.spotifyUserId,
-    lastSyncAt: account.lastSyncAt?.toISOString() ?? null,
-    needsReconnect: account.needsReconnect,
-    failureCount: account.failureCount,
-    scopes: account.scopes,
-  });
+  return NextResponse.json(await getSpotifyConnection(session.userId));
 }
 
 export async function DELETE(): Promise<NextResponse> {
@@ -39,6 +18,7 @@ export async function DELETE(): Promise<NextResponse> {
   await db.spotifyAccount.delete({ where: { userId: session.userId } }).catch(() => {
     // Already disconnected — not an error
   });
+  await invalidatePrefix(`stats:${session.userId}:`);
 
   logger.info({ userId: session.userId }, 'Spotify account disconnected');
   return new NextResponse(null, { status: 204 });

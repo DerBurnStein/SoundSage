@@ -8,6 +8,7 @@ const SCOPES = [
   'user-read-currently-playing',
   'user-top-read',
   'user-read-email',
+  'user-library-read', // for liked songs / saved tracks
 ].join(' ');
 
 export async function POST(): Promise<NextResponse> {

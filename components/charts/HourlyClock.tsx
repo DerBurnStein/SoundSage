@@ -80,11 +80,11 @@ export function HourlyClock({ data, loading }: HourlyClockProps) {
           {/* Cardinal labels */}
           {[0, 6, 12, 18].map(h => {
             const a = -Math.PI / 2 + h * SLICE;
-            const r = R_OUT + 22;
+            const r = R_OUT + 26;
             return (
               <text key={h}
-                x={CX + Math.cos(a) * r} y={CY + Math.sin(a) * r + 4}
-                textAnchor="middle" fontFamily="var(--font-mono)" fontSize="10" fill="var(--muted)">
+                x={CX + Math.cos(a) * r} y={CY + Math.sin(a) * r + 5}
+                textAnchor="middle" fontFamily="var(--font-mono)" fontSize="13" fontWeight="500" fill="var(--muted)">
                 {hourLabel(h)}
               </text>
             );
@@ -92,12 +92,12 @@ export function HourlyClock({ data, loading }: HourlyClockProps) {
 
           {/* Centre readout */}
           <text x={CX} y={CY - 4} textAnchor="middle"
-            fontFamily="var(--font-serif)" fontSize="20" fontWeight="500" fill="var(--ink)">
+            fontFamily="var(--font-serif)" fontSize="26" fontWeight="500" fill="var(--ink)">
             {hover != null ? data[hover]?.plays : max}
           </text>
-          <text x={CX} y={CY + 14} textAnchor="middle"
-            fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)" letterSpacing="0.1em">
-            {hover != null ? hourLabel(hover).toUpperCase() : `PEAK · ${hourLabel(peakHr).toUpperCase()}`}
+          <text x={CX} y={CY + 18} textAnchor="middle"
+            fontFamily="var(--font-mono)" fontSize="11" fontWeight="500" fill="var(--muted)" letterSpacing="0.1em">
+            {hover != null ? hourLabel(hover) : `PEAK · ${hourLabel(peakHr)}`}
           </text>
         </svg>
       </div>

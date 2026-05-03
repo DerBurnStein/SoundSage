@@ -74,6 +74,8 @@ model VerificationToken {
 model SpotifyAccount {
   userId         String   @id
   spotifyUserId  String   @unique
+  displayName    String? // Spotify-side display name (separate from Google's User.name)
+  imageUrl       String? // Spotify avatar URL — refreshed on connect + opportunistically
   accessToken    String   @db.Text // AES-256-GCM ciphertext (base64-encoded)
   refreshToken   String   @db.Text // AES-256-GCM ciphertext (base64-encoded)
   expiresAt      DateTime

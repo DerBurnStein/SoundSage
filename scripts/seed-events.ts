@@ -8,6 +8,10 @@
 // per row so collisions are rare. Drops cached stats for the user so the
 // next page load reflects the new data.
 
+// Load .env.local before any imports that read process.env
+import { loadEnvConfig } from '@next/env';
+loadEnvConfig(process.cwd());
+
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'crypto';
 

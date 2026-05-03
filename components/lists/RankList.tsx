@@ -5,7 +5,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Caps, Mono, Display, pad2 } from '../primitives';
+import { Caps, Mono, Display, pad2, cleanTrackName, cleanAlbumName } from '../primitives';
 import type { TopTrack, TopArtist } from '../../types';
 
 // ─────────────────────────────────────────────────────
@@ -23,14 +23,19 @@ export function TrackRankList({ title, kicker, items, loading }: TrackListProps)
   return (
     <RankListShell title={title} kicker={kicker} seeAllHref="/tracks">
       {items.map((it, i) => (
-        <RankRow key={it.id} rank={i} plays={it.plays} max={max}>
+        // Key by rank index, not track id. The row represents "rank N" — its
+        // bar should settle to whatever proportion currently belongs at that
+        // rank. Keying by id couples the bar to its track, which causes the
+        // bar to "follow" a track as it changes position and look like it
+        // jumps back-and-then-forward when ranks reshuffle.
+        <RankRow key={i} rank={i} plays={it.plays} max={max}>
           <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, fontWeight: 500, letterSpacing: '-0.01em', color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {it.name}
+            {cleanTrackName(it.name)}
           </div>
           <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
             by <em style={{ fontFamily: 'var(--font-mincho)', fontSize: 13 }}>{it.artists.map(a => a.name).join(', ')}</em>
             {' · '}
-            <Mono style={{ fontSize: 11 }}>{it.album.name}</Mono>
+            <Mono style={{ fontSize: 11 }}>{cleanAlbumName(it.album.name)}</Mono>
           </div>
         </RankRow>
       ))}
@@ -53,7 +58,7 @@ export function ArtistRankList({ title, kicker, items, loading }: ArtistListProp
   return (
     <RankListShell title={title} kicker={kicker} seeAllHref="/artists">
       {items.map((it, i) => (
-        <RankRow key={it.id} rank={i} plays={it.plays} max={max}>
+        <RankRow key={i} rank={i} plays={it.plays} max={max}>
           <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, fontWeight: 500, letterSpacing: '-0.01em', color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {it.name}
           </div>
@@ -123,7 +128,7 @@ function RankRow({ rank, plays, max, children }: {
         {children}
         {/* Relative play bar */}
         <div style={{ marginTop: 8, height: 2, background: 'var(--paper-3)', position: 'relative' }}>
-          <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: `${pct}%`, background: rank === 0 ? 'var(--ember)' : 'var(--ink)' }} />
+          <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: `${pct}%`, background: rank === 0 ? 'var(--ember)' : 'var(--ink)', transition: 'width 500ms cubic-bezier(0.22, 1, 0.36, 1)' }} />
         </div>
       </div>
       <div style={{ textAlign: 'right', minWidth: 80 }}>

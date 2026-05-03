@@ -54,12 +54,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Fetch Spotify user profile
   const spotifyUser = await spotifyGet<SpotifyUser>('/me', tokens.access_token);
 
-  // Persist encrypted tokens
+  const profileImage = spotifyUser.images?.[0]?.url ?? null;
+
+  // Persist encrypted tokens + profile metadata
   await db.spotifyAccount.upsert({
     where: { userId: pkce.userId },
     create: {
       userId: pkce.userId,
       spotifyUserId: spotifyUser.id,
+      displayName: spotifyUser.display_name,
+      imageUrl: profileImage,
       accessToken: encrypt(tokens.access_token),
       refreshToken: encrypt(tokens.refresh_token),
       expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
@@ -69,6 +73,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     },
     update: {
       spotifyUserId: spotifyUser.id,
+      displayName: spotifyUser.display_name,
+      imageUrl: profileImage,
       accessToken: encrypt(tokens.access_token),
       refreshToken: encrypt(tokens.refresh_token),
       expiresAt: new Date(Date.now() + tokens.expires_in * 1000),

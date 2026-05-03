@@ -17,6 +17,21 @@ export function MotifRail({ tab }: MotifRailProps) {
     artists:  '青海波 · seigaiha',
   };
 
+  // Per-tab chip palette. The chip's *shape* stays identical across tabs
+  // (same size / border weight / padding), but bg + outline + text all
+  // pick up that tab's signature palette so the chip feels native to its
+  // motif. Hardcoded — pulling from `var(--seal)` etc. would work but
+  // ties the chip to the live subtheme overrides; literal hex keeps the
+  // masthead feeling stable.
+  const CHIP: Record<TabId, { bg: string; border: string; text: string }> = {
+    overview: { bg: '#f0e8d6', border: '#14120e', text: '#3a342a' }, // washi + sumi
+    history:  { bg: '#e8ecec', border: '#0b2545', text: '#0b2545' }, // ice + Hokusai navy
+    patterns: { bg: '#c8456c', border: '#7a2a44', text: '#fbe8e7' }, // crimson + pale rose
+    tracks:   { bg: '#f5e6d3', border: '#b8341f', text: '#7a2418' }, // kraft + vermilion
+    artists:  { bg: '#1a1612', border: '#d4a017', text: '#e8c060' }, // lacquer + gold
+  };
+  const chip = CHIP[tab];
+
   return (
     <div style={{
       position: 'relative', width: '100%', height: 96,
@@ -33,11 +48,18 @@ export function MotifRail({ tab }: MotifRailProps) {
         {tab === 'artists'  && <Seigaiha    />}
       </svg>
 
+      {/* Motif label chip — fixed structure (same size, padding, border
+          weight) but the bg/outline/text are tab-themed via the CHIP map. */}
       <div style={{
         position: 'absolute', left: 18, bottom: 8,
         fontFamily: 'var(--font-mincho)',
-        fontSize: 10, letterSpacing: '0.4em', textTransform: 'uppercase',
-        color: 'var(--muted)', background: 'var(--paper-2)', padding: '2px 6px',
+        fontSize: 10, fontWeight: 500,
+        letterSpacing: '0.4em', textTransform: 'uppercase',
+        color: chip.text,
+        background: chip.bg,
+        border: `1px solid ${chip.border}`,
+        padding: '4px 10px',
+        lineHeight: 1.2,
       }}>
         {LABEL[tab] ?? ''}
       </div>

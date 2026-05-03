@@ -12,6 +12,10 @@
 // flushing the stats cache so we measure a cold path:
 //   redis-cli FLUSHDB
 
+// Load .env.local in case any future test reads it
+import { loadEnvConfig } from '@next/env';
+loadEnvConfig(process.cwd());
+
 interface EndpointTest {
   name: string;
   path: string;

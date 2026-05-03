@@ -6,10 +6,12 @@
 
 'use client';
 
+import { useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Mono, pad2 } from './primitives';
 import { ConnectionPill } from './ConnectionPill';
+import { NowPlaying } from './NowPlaying';
 import type { TabId, TimeRange } from '../types';
 
 // ─────────────────────────────────────────────────────
@@ -59,12 +61,12 @@ export function Masthead({ today }: MastheadProps) {
         <span>{today}</span>
       </div>
 
-      {/* Logo + mark */}
+      {/* Logo + now-playing + connection pill, all on one row */}
       <div style={{
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '22px 28px 18px', gap: 24,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexShrink: 0 }}>
           {/* Hanko seal mark — 聴 = "to listen" */}
           <div style={{
             width: 56, height: 56,
@@ -97,7 +99,22 @@ export function Masthead({ today }: MastheadProps) {
           </div>
         </div>
 
-        <ConnectionPill />
+        {/* Now-playing widget — fills the middle when active, collapses
+            to nothing when idle so the row stays clean. */}
+        <NowPlaying />
+
+        {/* Fixed-width right column so NowPlaying never shifts as the
+            ConnectionPill cycles through its loading states. */}
+        <div
+          style={{
+            flexShrink: 0,
+            minWidth: 290,
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <ConnectionPill />
+        </div>
       </div>
 
       {/* Tab nav + time-range picker */}
@@ -140,34 +157,70 @@ function TimeRangePicker() {
   const searchParams = useSearchParams();
   const router       = useRouter();
   const pathname     = usePathname();
+  const [isPending, startTransition] = useTransition();
   const range        = (searchParams.get('range') ?? '4w') as TimeRange;
+  // The picker drives data on Overview, Patterns, Tracks index, and Artists
+  // index. It is inert on History (Recent Stream is always "latest") and on
+  // any destination view (where the view's own slug encodes the time window).
+  const onRangeRoute = pathname === '/'
+                    || pathname === '/patterns'
+                    || pathname === '/tracks'
+                    || pathname === '/artists';
+  const inert        = !onRangeRoute || searchParams.has('view');
 
   function setRange(r: TimeRange) {
+    if (inert) return;
     const p = new URLSearchParams(searchParams.toString());
     p.set('range', r);
-    router.replace(`${pathname}?${p.toString()}`);
+    // Wrap in startTransition so Next.js keeps the current UI visible while
+    // the new data fetches — instead of replacing the page with loading.tsx
+    // skeletons. This keeps DOM nodes mounted across the navigation, so
+    // CSS transitions on bar widths animate from old → new value smoothly
+    // rather than from a fresh mount.
+    startTransition(() => {
+      router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+    });
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', borderLeft: '1px solid var(--rule)' }}>
-      {TIME_RANGES.map((r, i) => (
-        <button
-          key={r.id}
-          onClick={() => setRange(r.id)}
-          style={{
-            border: 'none',
-            background: range === r.id ? 'var(--paper-3)' : 'transparent',
-            color: range === r.id ? 'var(--ink)' : 'var(--muted)',
-            fontFamily: 'var(--font-sans)', fontSize: 11,
-            fontWeight: range === r.id ? 600 : 400,
-            padding: '0 14px', cursor: 'pointer',
-            borderRight: i < TIME_RANGES.length - 1 ? '1px solid var(--rule)' : 'none',
-            letterSpacing: '0.02em',
-          }}
-        >
-          {r.label}
-        </button>
-      ))}
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        borderLeft: '1px solid var(--rule)',
+        // Subtle visual signal that a range change is in flight. Doesn't
+        // disable the buttons — clicking again during pending just queues
+        // the next transition.
+        opacity: isPending ? 0.6 : 1,
+        transition: 'opacity 200ms ease',
+      }}
+      title={inert ? 'Time range does not apply here' : undefined}
+    >
+      {TIME_RANGES.map((r, i) => {
+        const isActive = !inert && range === r.id;
+        return (
+          <button
+            key={r.id}
+            onClick={() => setRange(r.id)}
+            disabled={inert}
+            aria-disabled={inert}
+            style={{
+              border: 'none',
+              background: isActive ? 'var(--paper-3)' : 'transparent',
+              color: inert ? 'var(--dim)' : isActive ? 'var(--ink)' : 'var(--muted)',
+              fontFamily: 'var(--font-sans)', fontSize: 11,
+              fontWeight: isActive ? 600 : 400,
+              padding: '0 14px',
+              cursor: inert ? 'not-allowed' : 'pointer',
+              opacity: inert ? 0.45 : 1,
+              borderRight: i < TIME_RANGES.length - 1 ? '1px solid var(--rule)' : 'none',
+              letterSpacing: '0.02em',
+            }}
+          >
+            {r.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

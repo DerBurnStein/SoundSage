@@ -49,6 +49,7 @@ export interface ActivityStats {
 export interface HourlyBucket {
   hour:  number;             // 0–23
   plays: number;
+  mins:  number;             // total minutes listened in this hour bucket
 }
 export interface HourlyStats {
   buckets: HourlyBucket[];   // always 24 elements

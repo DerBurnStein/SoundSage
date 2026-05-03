@@ -182,3 +182,12 @@ body *, body *::before, body *::after {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.4; }
 }
+
+/* Suppress all transitions briefly on theme/tab change to prevent the
+   palette-swap flash. Set by ThemeProvider on mount and on every route
+   change, removed next frame. */
+.no-transitions, .no-transitions * {
+  transition: none !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+}

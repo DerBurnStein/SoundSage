@@ -41,6 +41,7 @@ export interface SpotifyUser {
   id: string;
   display_name: string | null;
   email: string;
+  images?: { url: string; width?: number; height?: number }[];
 }
 
 export interface SpotifyRecentlyPlayedItem {

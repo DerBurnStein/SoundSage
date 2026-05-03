@@ -5,7 +5,6 @@ import {
   Noto_Serif_JP,
   Shippori_Mincho,
 } from 'next/font/google';
-import { auth } from '@/lib/auth';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Masthead } from '@/components/Masthead';
 import { Providers } from './providers';
@@ -31,9 +30,12 @@ export const metadata: Metadata = {
   description: 'Your personal Spotify listening almanac.',
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // `today` is only used as a display string in the masthead. Computing it
+  // on the server keeps it stable for the request, and there's no auth call
+  // here — every component below figures out its own auth needs. Keeping the
+  // root layout free of dynamic data lets Next.js cache the shell and
+  // navigations between pages don't tear down the masthead.
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
