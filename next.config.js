@@ -22,6 +22,15 @@ const nextConfig = {
   },
 
   async headers() {
+    // Next.js dev uses eval() for HMR / React Fast Refresh, so removing
+    // 'unsafe-eval' from script-src in dev breaks hydration (the bundle
+    // loads but Fast Refresh can't run, so no event handlers attach).
+    // Keep the strict policy for production only.
+    const isDev = process.env.NODE_ENV !== 'production';
+    const scriptSrc = isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'";
+
     return [
       {
         source: '/(.*)',
@@ -49,7 +58,7 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              scriptSrc,
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' data: https://fonts.gstatic.com",
               "img-src 'self' data: https://i.scdn.co https://lh3.googleusercontent.com",

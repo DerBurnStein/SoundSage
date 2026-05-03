@@ -55,6 +55,10 @@ export function SettingsButton() {
   const [syncing, setSyncing]         = useState(false);
   const [syncMsg, setSyncMsg]         = useState<string | null>(null);
   const [syncDone, setSyncDone]       = useState(false);
+  // Real sync progress 0..100. Eases toward 88 during the run, snaps to
+  // 100 only when /api/sync/status confirms a newer lastSyncAt — never
+  // shows a fake "complete" state, matching the SyncCard behaviour.
+  const [syncProgress, setSyncProgress] = useState(0);
   // Disconnect flow:
   //   'idle'    — show the "Disconnect Spotify" button.
   //   'confirm' — show an inline "are you sure?" panel explaining the
@@ -102,6 +106,7 @@ export function SettingsButton() {
   async function handleSyncNow() {
     setSyncMsg(null);
     setSyncDone(false);
+    setSyncProgress(0);
 
     // Capture the user's current `lastSyncAt` so we can detect a NEWER
     // value once the worker finishes — that's our completion signal.
@@ -122,13 +127,38 @@ export function SettingsButton() {
           setSyncMsg('Sync failed. Try again later.');
         }
         setSyncing(false);
+        setSyncProgress(0);
         return;
       }
     } catch {
       setSyncMsg('Network error.');
       setSyncing(false);
+      setSyncProgress(0);
       return;
     }
+
+    // Indeterminate ease toward 88% so the bar feels alive but never
+    // falsely lands on "done". The poller below is the only thing that
+    // can complete it.
+    let p = 0;
+    const progressTick = setInterval(() => {
+      p += (88 - p) * 0.08 + 1.2;
+      if (p > 88) p = 88;
+      setSyncProgress(p);
+    }, 200);
+
+    const finish = (msg: string, done: boolean) => {
+      clearInterval(progressTick);
+      setSyncProgress(done ? 100 : 0);
+      setSyncing(false);
+      setSyncMsg(msg);
+      setSyncDone(done);
+      if (done) {
+        // Drop the 100% bar back to 0 once the user has had a moment
+        // to register that the sync finished.
+        setTimeout(() => setSyncProgress(0), 1200);
+      }
+    };
 
     // Poll for completion. Tries every 2s; gives up after ~90s with a
     // gentle "still working" message rather than spinning forever.
@@ -140,20 +170,18 @@ export function SettingsButton() {
         if (s.ok) {
           const body = (await s.json()) as { lastSyncAt: string | null };
           if (body.lastSyncAt && body.lastSyncAt !== baseline) {
-            setSyncing(false);
-            setSyncDone(true);
-            setSyncMsg('Synced just now.');
-            // Surface the new tracks immediately in the live RecentStream
-            // (and any other consumers of the same query key).
-            queryClient.invalidateQueries({ queryKey: ['recent-history'] });
+            // refetchQueries forces an immediate network round-trip on the
+            // matching subscribers; invalidateQueries only flags stale,
+            // which can race with the live RecentStream's polling window.
+            queryClient.refetchQueries({ queryKey: ['recent-history'] });
+            finish('Synced just now.', true);
             return;
           }
         }
       } catch { /* transient — keep polling */ }
 
       if (Date.now() - startedAt > TIMEOUT_MS) {
-        setSyncing(false);
-        setSyncMsg('Still working — give it a bit longer.');
+        finish('Still working — give it a bit longer.', false);
         return;
       }
       setTimeout(tick, 2_000);
@@ -320,6 +348,7 @@ export function SettingsButton() {
                     onClick={handleSyncNow}
                     syncing={syncing}
                     done={syncDone}
+                    progress={syncProgress}
                   />
                   {syncMsg && (
                     <Mono
@@ -720,16 +749,23 @@ function SyncButton({
   onClick,
   syncing,
   done,
+  progress,
 }: {
-  onClick: () => void;
-  syncing: boolean;
-  done:    boolean;
+  onClick:  () => void;
+  syncing:  boolean;
+  done:     boolean;
+  progress: number; // 0..100, polled real progress
 }) {
-  // The button doubles as a progress indicator. While syncing, an ink-tinted
-  // stripe sweeps left-to-right beneath the label (indeterminate, since the
-  // backend doesn't expose per-job progress). On completion the fill snaps
-  // to a moss/green wash so the button itself is the success indicator.
-  const label = syncing ? 'Syncing…' : done ? 'Synced' : 'Re-sync now';
+  // The button doubles as a progress indicator. While the worker runs an
+  // ink-tinted fill grows from 0 → ~88 % under the label, then snaps to
+  // 100 % only when /api/sync/status confirms a newer lastSyncAt. On
+  // completion the button border switches to moss/green so the button
+  // itself reads as the success indicator.
+  const label = syncing
+    ? `Syncing… ${Math.round(progress)}%`
+    : done
+      ? 'Synced'
+      : 'Re-sync now';
   return (
     <button
       type="button"
@@ -751,17 +787,19 @@ function SyncButton({
         transition: 'background 0.25s, border-color 0.25s',
       }}
     >
-      {/* Sweeping fill — the indeterminate progress affordance. Sits below
-          the label, never blocks pointer events. */}
-      {syncing && (
+      {/* Real-progress fill driven by the polled state. Sits below the
+          label and never intercepts pointer events. */}
+      {(syncing || progress > 0) && (
         <span
           aria-hidden="true"
           style={{
             position: 'absolute',
-            inset: 0,
-            background:
-              'linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--ink) 18%, transparent) 50%, transparent 100%)',
-            animation: 'sync-sweep 1.4s linear infinite',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: `${progress}%`,
+            background: 'color-mix(in srgb, var(--ink) 14%, transparent)',
+            transition: 'width 200ms linear',
             pointerEvents: 'none',
           }}
         />

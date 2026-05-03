@@ -130,15 +130,22 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
     throw err;
   }
 
-  // Upsert track + artist metadata, then kick off genre backfill — both
-  // non-critical, both fire-and-forget so they don't slow the sync response.
-  upsertMetadata(items)
-    .then(async () => {
-      const { backfillArtistGenresForUser } = await import('./artist-backfill');
-      return backfillArtistGenresForUser(userId);
-    })
+  // Track + artist metadata MUST land before we report success — the
+  // RecentStream query joins ListeningEvent.trackId → Track to get the
+  // display name, and a missing Track row makes the just-played track
+  // render as "Unknown" until the next upsert. This was a few hundred
+  // ms of "stale" feeling on every sync. Upsert is bounded to ~50 rows
+  // so awaiting it costs us very little.
+  try {
+    await upsertMetadata(items);
+  } catch (err) {
+    logger.warn({ userId, err: String(err) }, 'Metadata upsert failed (non-fatal)');
+  }
+  // Genre backfill is the long-tail piece — keep it fire-and-forget.
+  import('./artist-backfill')
+    .then(({ backfillArtistGenresForUser }) => backfillArtistGenresForUser(userId))
     .catch((err) =>
-      logger.warn({ userId, err: String(err) }, 'Metadata/genre backfill failed (non-critical)')
+      logger.warn({ userId, err: String(err) }, 'Genre backfill failed (non-critical)')
     );
 
   // Append to Redis sync log (last 5 entries per user)

@@ -56,24 +56,46 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
             We&apos;ve been notified. Try again, or reload the page if the
             problem persists.
           </p>
-          <button
-            type="button"
-            onClick={() => reset()}
-            style={{
-              background: '#14120e',
-              color: '#f0e8d6',
-              border: 'none',
-              padding: '10px 22px',
-              fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-            }}
-          >
-            Try again
-          </button>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button
+              type="button"
+              onClick={() => reset()}
+              style={{
+                background: 'transparent',
+                color: '#14120e',
+                border: '1px solid #14120e',
+                padding: '10px 22px',
+                fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+              }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') window.location.reload();
+              }}
+              style={{
+                background: '#14120e',
+                color: '#f0e8d6',
+                border: '1px solid #14120e',
+                padding: '10px 22px',
+                fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+              }}
+            >
+              Reload page
+            </button>
+          </div>
           {error.digest && (
             <div
               style={{

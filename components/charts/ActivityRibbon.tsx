@@ -17,7 +17,7 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Caps, Mono, hourLabel, fmtMins } from '../primitives';
 import { useTheme } from '../ThemeProvider';
 import type { ActivityBucket } from '../../types';
@@ -35,17 +35,15 @@ const BASELINE = PAD_T + INNER_H;
 
 const MAX_LABELS = 14;
 const ANIM_DURATION = 700;
-const BAR_DURATION  = 550;
 const EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
-// CSS transitions for properties we DON'T drive frame-by-frame from the
-// rAF scale loop. `x` and `width` are owned by the loop (a CSS transition
-// on those would chase a moving target every frame and produce stutter),
-// so they're absent. `y` and `height` only change between data updates,
-// which is exactly the case where a CSS transition reads as a smooth
-// re-shape rather than a snap.
+// CSS transition for height/y. Duration deliberately matches the rAF
+// scale tween so a bar that's both sliding in *and* growing into its
+// target height reads as a single coherent motion, not two phases.
+// `x` and `width` are excluded because the rAF loop drives them every
+// frame — adding a CSS transition would chase a moving target and stutter.
 const BAR_TRANSITION =
-  `y ${BAR_DURATION}ms ${EASING}, ` +
-  `height ${BAR_DURATION}ms ${EASING}, ` +
+  `y ${ANIM_DURATION}ms ${EASING}, ` +
+  `height ${ANIM_DURATION}ms ${EASING}, ` +
   `fill 0.12s`;
 
 export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
@@ -62,18 +60,23 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
     () => incomingProp ?? []
   );
   const [scale, setScale] = useState(1);
-  // `interp` is true for exactly one render after a buckets-shape swap.
-  // While true, fresh bars render at heights *mapped from the previous
-  // render's positions* (their "from" values). Next frame we flip it off,
-  // bars re-render at their real target heights, and the CSS height
-  // transition catches the change — so 4w↔6m feels like a re-shape rather
-  // than a hard cut, even though the bucket keys are completely different.
-  const [interp, setInterp] = useState(false);
   const animRafRef = useRef<number | null>(null);
   const lastSeenRef = useRef<ActivityBucket[] | undefined>(incomingProp);
-  // Snapshot of the most recently *rendered* heights, used as the "from"
-  // values when the buckets array is replaced.
-  const prevHeightsRef = useRef<{ count: number; heights: number[] } | null>(null);
+  // Snapshot of the previous render's bar keys + per-position heights.
+  // Used at shape-change time to give fresh bars a sensible "from" height
+  // that visually continues the previous chart, instead of popping in at
+  // zero. The FLIP layout effect below applies these via direct DOM
+  // manipulation — relying on a state-driven two-render dance to trigger
+  // CSS transitions doesn't work because React 18 batching can collapse
+  // both renders into a single browser commit, so the browser never
+  // sees the height change and the transition never fires.
+  const prevSnapRef = useRef<{
+    keys: Set<string>;
+    heights: number[];
+  } | null>(null);
+  // Ref to the parent <g> that contains all bar groups, so the FLIP
+  // effect can walk the live <rect> elements after each render.
+  const plotRef = useRef<SVGGElement>(null);
 
   useEffect(() => {
     if (incomingProp === lastSeenRef.current) return;
@@ -91,7 +94,6 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
     if (oldLen === newLen || oldLen <= 1 || newLen <= 1 || reduceMotion) {
       setRenderedBuckets(incoming);
       setScale(1);
-      setInterp(true);
       return;
     }
 
@@ -105,7 +107,6 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
       // unwinds toward 1 the bars compress inward and the new ones slide
       // in from the left.
       setRenderedBuckets(incoming);
-      setInterp(true);
       const initial = newLen / oldLen;
       setScale(initial);
       const tick = (now: number) => {
@@ -134,7 +135,6 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
           animRafRef.current = requestAnimationFrame(tick);
         } else {
           setRenderedBuckets(incoming);
-          setInterp(true);
           setScale(1);
           setHover(null);
           animRafRef.current = null;
@@ -144,29 +144,93 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
     }
   }, [incomingProp, renderedBuckets.length, reduceMotion]);
 
-  // After a render that armed `interp`, flip it off next frame so the
-  // *next* render re-applies the target heights and the CSS height
-  // transition fires from the just-painted "from" heights to the targets.
-  useEffect(() => {
-    if (!interp) return;
-    const id = requestAnimationFrame(() => setInterp(false));
-    return () => cancelAnimationFrame(id);
-  }, [interp]);
+  // FLIP layout effect — runs synchronously after every render with new
+  // buckets, *before* the browser paints. For each bar, find its "from"
+  // height (the height it had at the same fractional position in the
+  // previous render's snapshot) and apply it imperatively with no
+  // transition; force a reflow; then apply the target height with the
+  // transition enabled. The browser commits two paints — at fromHeight
+  // then at targetHeight — and animates between them. This is the only
+  // way to guarantee the transition fires when DOM elements are fresh
+  // mounts (different keys), because CSS transitions don't fire on
+  // initial computed values, only on subsequent property changes.
+  useLayoutEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return;
 
-  // Snapshot the heights we actually rendered (resolved below as
-  // `renderHeights`) so the next shape change has a "from" lookup table.
-  // We only update the snapshot on settled renders so during a tween the
-  // snapshot stays anchored to the *target* layout, not the morph frames.
-  useEffect(() => {
-    if (interp) return;
-    prevHeightsRef.current = {
-      count: renderedBuckets.length,
-      heights: renderedBuckets.map((d) => {
-        const m = Math.max(...renderedBuckets.map((b) => b.mins), 1);
-        return (d.mins / m) * INNER_H;
-      }),
+    const snap = prevSnapRef.current;
+    const m = Math.max(...renderedBuckets.map((b) => b.mins), 1);
+    const targetH = renderedBuckets.map((d) => (d.mins / m) * INNER_H);
+
+    // Capture this render as the next snapshot before any work below
+    // mutates anything. Apply leading-zero clamp so fresh bars later
+    // mapping into a quiet leading region don't start at zero.
+    const FLOOR_FRAC = 0.1;
+    const minSig = INNER_H * FLOOR_FRAC;
+    const snapHeights = targetH.slice();
+    let firstReal = 0;
+    while (firstReal < snapHeights.length - 1 && snapHeights[firstReal]! < minSig) {
+      firstReal++;
+    }
+    const anchor = snapHeights[firstReal] ?? 0;
+    for (let i = 0; i < firstReal; i++) snapHeights[i] = anchor;
+
+    if (reduceMotion || !snap) {
+      // First render of this component, or motion disabled — no FLIP,
+      // just refresh the snapshot for next time.
+      prevSnapRef.current = {
+        keys: new Set(renderedBuckets.map((d) => d.t)),
+        heights: snapHeights,
+      };
+      return;
+    }
+
+    const count = renderedBuckets.length;
+    const rects = plot.querySelectorAll<SVGRectElement>('rect[data-bar="true"]');
+
+    rects.forEach((rect, i) => {
+      const d = renderedBuckets[i];
+      if (!d) return;
+      const target = targetH[i] ?? 0;
+      // Determine the "from" height. Shared bars (same key in previous
+      // render) start at their *previous* height — read off the live
+      // attribute, which still reflects the prior commit. Fresh bars
+      // (new keys, e.g. grain change) get a positional lookup into the
+      // snapshot so they appear at "what was at this visual position
+      // before" instead of zero.
+      let fromH: number;
+      if (snap.keys.has(d.t)) {
+        // Shared bar — its DOM element kept its prior `height` attr.
+        const cur = rect.getAttribute('height');
+        fromH = cur ? parseFloat(cur) : target;
+      } else {
+        const p = count <= 1 ? 1 : i / (count - 1);
+        const i_old = Math.round(p * Math.max(0, snap.heights.length - 1));
+        fromH = snap.heights[i_old] ?? target;
+      }
+
+      // Skip work if the bar isn't actually moving.
+      if (Math.abs(fromH - target) < 0.5) return;
+
+      const fromY = BASELINE - fromH;
+      const targetY = BASELINE - target;
+
+      rect.style.transition = 'none';
+      rect.setAttribute('height', String(fromH));
+      rect.setAttribute('y', String(fromY));
+      // Force a synchronous reflow so the browser commits the "from"
+      // state before we re-enable the transition.
+      void rect.getBoundingClientRect();
+      rect.style.transition = BAR_TRANSITION;
+      rect.setAttribute('height', String(target));
+      rect.setAttribute('y', String(targetY));
+    });
+
+    prevSnapRef.current = {
+      keys: new Set(renderedBuckets.map((d) => d.t)),
+      heights: snapHeights,
     };
-  }, [renderedBuckets, interp]);
+  }, [renderedBuckets, reduceMotion]);
 
   if (loading || !renderedBuckets.length) return <ActivityRibbonSkeleton />;
 
@@ -207,26 +271,11 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
     return barRightX(i) - barW / 2;
   }
 
-  // Target heights for the current buckets, computed once per render.
+  // Target heights — applied via the FLIP useLayoutEffect above so the
+  // browser sees the from→to transition. The render itself just emits
+  // bars at target; the effect overrides them imperatively for one
+  // frame, forces a reflow, then re-applies target with transition on.
   const targetHeights = buckets.map((d) => (d.mins / max) * INNER_H);
-
-  // "From" heights — used for exactly the render that follows a buckets-
-  // shape change. Map each new bar to a previous bar at the same fractional
-  // position, then carry that bar's height across as the starting value.
-  // The result: visual continuity from old layout to new, with the CSS
-  // height transition handling the morph on the next render.
-  const fromHeights: number[] | null =
-    interp && prevHeightsRef.current && !reduceMotion
-      ? buckets.map((_, i) => {
-          const prev = prevHeightsRef.current!;
-          if (prev.count <= 0) return targetHeights[i]!;
-          const p = count <= 1 ? 1 : i / (count - 1);
-          const i_old = Math.round(p * Math.max(0, prev.count - 1));
-          return prev.heights[i_old] ?? targetHeights[i]!;
-        })
-      : null;
-
-  const renderHeights = fromHeights ?? targetHeights;
 
   const labelStep = Math.max(1, Math.ceil(count / MAX_LABELS));
   function shouldLabel(i: number): boolean {
@@ -364,11 +413,11 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
             );
           })}
 
-          <g clipPath="url(#ar-plot)">
+          <g clipPath="url(#ar-plot)" ref={plotRef}>
             {buckets.map((d, i) => {
               const cx = barCenterX(i);
               const x = cx - barW / 2;
-              const bh = renderHeights[i]!;
+              const bh = targetHeights[i]!;
               const y = BASELINE - bh;
               const isHv = hover === i;
               const isPk = i === peakIdx;
@@ -401,6 +450,7 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
                     style={{ transition: BAR_TRANSITION }}
                   />
                   <rect
+                    data-bar="true"
                     x={x}
                     y={y}
                     width={barW}

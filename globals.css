@@ -311,14 +311,6 @@ body *, body *::before, body *::after {
   50%       { opacity: 0.4; }
 }
 
-/* Indeterminate sync-progress stripe — used by the Re-sync button while
-   the backend job runs. We don't get a real % so we sweep a translucent
-   ink fill across the button repeatedly until the poller sees a newer
-   `lastSyncAt`. */
-@keyframes sync-sweep {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(100%);  }
-}
 
 /* Suppress all transitions briefly on theme/tab change to prevent the
    palette-swap flash. Set by ThemeProvider on mount and on every route

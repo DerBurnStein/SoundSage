@@ -5,6 +5,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Caps, Mono, pad2 } from './primitives';
 import type { SyncStatus } from '../types';
 
@@ -13,10 +14,14 @@ export function SyncCard() {
   const [running,  setRunning]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [log,      setLog]      = useState<{ t: string; m: string }[]>([]);
+  const queryClient = useQueryClient();
 
-  const fetchStatus = useCallback(async () => {
+  const fetchStatus = useCallback(async (): Promise<SyncStatus | null> => {
     const r = await fetch('/api/sync/status');
-    if (r.ok) setStatus(await r.json());
+    if (!r.ok) return null;
+    const body = (await r.json()) as SyncStatus;
+    setStatus(body);
+    return body;
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
@@ -26,24 +31,57 @@ export function SyncCard() {
     setRunning(true);
     setProgress(0);
 
+    // Capture baseline lastSyncAt — we'll watch for it to change as the
+    // canonical "the worker actually finished" signal. Without this we'd
+    // be guessing how long a sync takes and showing "complete" too early.
+    const baseline = (await fetchStatus())?.lastSyncAt ?? null;
+
     const r = await fetch('/api/sync/trigger', { method: 'POST' });
     if (!r.ok) { setRunning(false); return; }
 
-    // Optimistic progress animation
+    // Indeterminate progress: ease toward 90%, then snap to 100% only when
+    // a real status poll proves lastSyncAt has advanced. We never sit at
+    // 100 unless the worker truly finished.
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 90_000;
+
+    let progressTickId: ReturnType<typeof setInterval> | null = null;
     let p = 0;
-    const id = setInterval(() => {
-      p += 8 + Math.random() * 18;
-      if (p >= 100) {
-        p = 100;
-        clearInterval(id);
-        fetchStatus();
-        const now = new Date();
-        const t   = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-        setLog(l => [{ t, m: 'sync complete — cursor advanced' }, ...l].slice(0, 6));
-        setTimeout(() => { setRunning(false); setProgress(0); }, 600);
-      }
+    progressTickId = setInterval(() => {
+      // Asymptote at ~88% so the bar feels alive but never falsely lands
+      // on "done". The poller below is the only thing that can complete it.
+      p += (88 - p) * 0.08 + 1.2;
+      if (p > 88) p = 88;
       setProgress(p);
-    }, 220);
+    }, 200);
+
+    const finish = (msg: string) => {
+      if (progressTickId) clearInterval(progressTickId);
+      setProgress(100);
+      const now = new Date();
+      const t = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+      setLog(l => [{ t, m: msg }, ...l].slice(0, 6));
+      setTimeout(() => { setRunning(false); setProgress(0); }, 600);
+    };
+
+    const poll = async () => {
+      const fresh = await fetchStatus();
+      if (fresh?.lastSyncAt && fresh.lastSyncAt !== baseline) {
+        // refetchQueries forces an immediate network round-trip on the
+        // matching subscribers — invalidateQueries only marks them stale,
+        // which can race with the live RecentStream's own 30s polling
+        // window and end up with no visible refresh until the next tick.
+        queryClient.refetchQueries({ queryKey: ['recent-history'] });
+        finish('sync complete — cursor advanced');
+        return;
+      }
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        finish('still working — give it a bit longer');
+        return;
+      }
+      setTimeout(poll, 1500);
+    };
+    setTimeout(poll, 1500);
   }
 
   const statusGrid: [string, string, string][] = status ? [

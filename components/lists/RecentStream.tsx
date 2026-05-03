@@ -59,13 +59,14 @@ export function RecentStream({ events, loading, live }: RecentStreamProps) {
 function LiveRecentStream({ initial }: { initial: RecentEvent[] }) {
   const { status } = useSession();
   const { reduceMotion } = useTheme();
-  const [merged, setMerged] = useState<RecentEvent[]>(initial);
-  const seenIdsRef = useRef<Set<string>>(new Set(initial.map((e) => e.id)));
   const cap = Math.max(initial.length, 12);
 
   // Polling: every 30s while focused, plus refetch on focus. The query
-  // key matches the one SettingsButton invalidates after a manual sync,
-  // so a successful re-sync triggers an immediate refetch here.
+  // key matches the one SyncCard / SettingsButton refetch after a manual
+  // sync, so a successful re-sync triggers an immediate refetch here.
+  // `placeholderData: keepPreviousData` would also work but the SSR
+  // `initial` already serves as the "before first fetch" content, so we
+  // just gate the live data swap on `live` being defined.
   const { data: live } = useQuery<RecentHistoryResponse>({
     queryKey: ['recent-history'],
     queryFn: async () => {
@@ -79,26 +80,20 @@ function LiveRecentStream({ initial }: { initial: RecentEvent[] }) {
     staleTime: 10_000,
   });
 
-  // Merge any newer-than-current events into the front of the list. We
-  // only prepend events whose `playedAt` is strictly newer than the
-  // current top — this keeps things ordered and idempotent across polls
-  // even if the API's most recent page overlaps with what's on screen.
-  useEffect(() => {
-    if (!live?.events?.length) return;
-    setMerged((prev) => {
-      const topAt = prev[0]?.playedAt ?? '';
-      const incoming = live.events
-        .filter((e) => !seenIdsRef.current.has(e.id) && e.playedAt > topAt);
-      if (incoming.length === 0) return prev;
-      // API returns DESC; preserving that order at the head of the list.
-      for (const e of incoming) seenIdsRef.current.add(e.id);
-      return [...incoming, ...prev].slice(0, cap);
-    });
-  }, [live, cap]);
+  // Trust the API response. The previous merge logic only prepended
+  // events strictly *newer* than the current top — but Spotify's
+  // recently-played API can return new tracks with timestamps slightly
+  // older than the existing top (recent gap fills, indexing lag), and
+  // those would silently get dropped from the displayed list. The FLIP
+  // animation in RecentStreamShell handles per-row diffs cleanly:
+  // shared rows shift to their new positions, fresh rows slide in from
+  // above, dropped rows unmount — exactly what we want when the server
+  // hands us a new ordering.
+  const events = live?.events?.slice(0, cap) ?? initial;
 
   return (
     <RecentStreamShell
-      events={merged}
+      events={events}
       animateInsert={!reduceMotion}
     />
   );

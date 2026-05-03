@@ -98,24 +98,49 @@ export function ErrorFallback({
           while rendering. Try once more, or refresh the tab if it persists.
         </p>
 
-        <button
-          type="button"
-          onClick={() => reset()}
-          style={{
-            background: 'var(--ink)',
-            color: 'var(--paper)',
-            border: 'none',
-            padding: '10px 20px',
-            fontFamily: 'var(--font-sans)',
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            cursor: 'pointer',
-          }}
-        >
-          Try again
-        </button>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+          <button
+            type="button"
+            onClick={() => reset()}
+            style={{
+              background: 'transparent',
+              color: 'var(--ink)',
+              border: '1px solid var(--ink)',
+              padding: '10px 20px',
+              fontFamily: 'var(--font-sans)',
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+            }}
+          >
+            Try again
+          </button>
+          {/* Fallback for the common case: the error is server-side and a
+              soft reset() would re-throw. Reload bypasses the cached
+              segment and re-fetches the page from scratch. */}
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') window.location.reload();
+            }}
+            style={{
+              background: 'var(--ink)',
+              color: 'var(--paper)',
+              border: '1px solid var(--ink)',
+              padding: '10px 20px',
+              fontFamily: 'var(--font-sans)',
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+            }}
+          >
+            Reload page
+          </button>
+        </div>
 
         {error.digest && (
           <div
