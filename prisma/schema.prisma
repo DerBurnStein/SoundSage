@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── App user (keyed by NextAuth-generated cuid) ─────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  prefs         Json      @default("{\"theme\":\"paper\",\"density\":\"regular\"}")
+  timezone      String    @default("UTC")
+  createdAt     DateTime  @default(now())
+
+  accounts Account[]
+  sessions Session[]
+  spotify  SpotifyAccount?
+  events   ListeningEvent[]
+
+  @@map("users")
+}
+
+// ─── NextAuth tables (managed by @auth/prisma-adapter) ───────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Spotify connection (1:1 with User, optional until connected) ─────────────
+
+model SpotifyAccount {
+  userId         String   @id
+  spotifyUserId  String   @unique
+  accessToken    String   @db.Text // AES-256-GCM ciphertext (base64-encoded)
+  refreshToken   String   @db.Text // AES-256-GCM ciphertext (base64-encoded)
+  expiresAt      DateTime
+  scopes         String
+  cursor         DateTime? // ingestion high-water mark (last played_at synced)
+  lastSyncAt     DateTime?
+  failureCount   Int      @default(0)
+  needsReconnect Boolean  @default(false)
+  connectedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("spotify_accounts")
+}
+
+// ─── Track metadata cache ─────────────────────────────────────────────────────
+
+model Track {
+  id          String   @id // Spotify track ID (no URI prefix — just the bare ID)
+  name        String
+  artistNames String[]
+  artistIds   String[] // parallel to artistNames; references Artist.id
+  albumName   String?
+  albumId     String?
+  imageUrl    String?
+  durationMs  Int?
+  updatedAt   DateTime @updatedAt
+
+  @@map("tracks")
+}
+
+// ─── Artist metadata cache (genres backfilled async) ──────────────────────────
+
+model Artist {
+  id           String   @id // Spotify artist ID
+  name         String
+  imageUrl     String?
+  genres       String[] // empty until backfill job populates it
+  genresSynced Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+
+  @@index([genresSynced])
+  @@map("artists")
+}
+
+// ─── Listening events (core data table) ──────────────────────────────────────
+
+model ListeningEvent {
+  id       BigInt   @id @default(autoincrement())
+  userId   String
+  trackId  String
+  playedAt DateTime
+  msPlayed Int?
+  source   String   @default("recently_played") // 'recently_played' | 'extended_history'
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId, playedAt]) // dedup key — skipDuplicates relies on this
+  @@index([userId, playedAt(sort: Desc)]) // primary query path for all stats
+  @@map("listening_events")
+}

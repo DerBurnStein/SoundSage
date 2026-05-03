@@ -1,0 +1,230 @@
+import { db } from './db';
+import { ensureFreshToken } from './spotify-tokens';
+import { spotifyGet } from './spotify';
+import { redis } from './redis';
+import logger from './logger';
+
+// ─── Spotify response shapes (richer than the shared type — includes album) ───
+
+interface RichTrack {
+  id: string;
+  name: string;
+  duration_ms: number;
+  artists: { id: string; name: string }[];
+  album: {
+    name: string;
+    images: { url: string; width: number; height: number }[];
+  };
+}
+
+interface RichPlayHistoryItem {
+  track: RichTrack;
+  played_at: string; // ISO 8601
+}
+
+interface RecentlyPlayedResponse {
+  items: RichPlayHistoryItem[];
+  next: string | null;
+  cursors?: { after: string; before: string };
+}
+
+// ─── Public result type ───────────────────────────────────────────────────────
+
+export interface SyncResult {
+  inserted: number;
+  cursor: Date | null;
+  skipped: boolean; // true when account missing / needs reconnect
+}
+
+// ─── Main sync function ───────────────────────────────────────────────────────
+
+export async function incrementalSync(userId: string): Promise<SyncResult> {
+  const account = await db.spotifyAccount.findUnique({ where: { userId } });
+
+  if (!account) {
+    logger.info({ userId }, 'Sync skipped: no Spotify account');
+    return { inserted: 0, cursor: null, skipped: true };
+  }
+
+  if (account.needsReconnect) {
+    logger.info({ userId }, 'Sync skipped: account needs reconnect');
+    return { inserted: 0, cursor: account.cursor, skipped: true };
+  }
+
+  // Ensure we have a valid access token (refreshes if needed)
+  let accessToken: string;
+  try {
+    accessToken = await ensureFreshToken(userId);
+  } catch (err) {
+    await bumpFailureCount(userId, account.failureCount);
+    throw err;
+  }
+
+  // Build query — use cursor (epoch ms) if we have one
+  const qs = new URLSearchParams({ limit: '50' });
+  if (account.cursor) {
+    qs.set('after', String(account.cursor.getTime()));
+  }
+
+  let data: RecentlyPlayedResponse;
+  try {
+    data = await spotifyGet<RecentlyPlayedResponse>(
+      `/me/player/recently-played?${qs.toString()}`,
+      accessToken
+    );
+  } catch (err) {
+    await bumpFailureCount(userId, account.failureCount);
+    throw err;
+  }
+
+  const items = data.items ?? [];
+
+  // Nothing new — just stamp lastSyncAt and return
+  if (items.length === 0) {
+    await db.spotifyAccount.update({
+      where: { userId },
+      data: { lastSyncAt: new Date(), failureCount: 0 },
+    });
+    return { inserted: 0, cursor: account.cursor, skipped: false };
+  }
+
+  const events = items.map((item) => ({
+    userId,
+    trackId: item.track.id,
+    playedAt: new Date(item.played_at),
+    msPlayed: null as number | null,
+    source: 'recently_played' as const,
+  }));
+
+  // New high-water mark = latest playedAt in this batch
+  const newCursor = events.reduce(
+    (max, e) => (e.playedAt > max ? e.playedAt : max),
+    events[0].playedAt
+  );
+
+  // Atomically insert events + advance cursor
+  let inserted = 0;
+  try {
+    const result = await db.$transaction(async (tx) => {
+      const createResult = await tx.listeningEvent.createMany({
+        data: events,
+        skipDuplicates: true,
+      });
+      await tx.spotifyAccount.update({
+        where: { userId },
+        data: { cursor: newCursor, lastSyncAt: new Date(), failureCount: 0 },
+      });
+      return createResult;
+    });
+    inserted = result.count;
+  } catch (err) {
+    await bumpFailureCount(userId, account.failureCount);
+    throw err;
+  }
+
+  // Upsert track + artist metadata, then kick off genre backfill — both
+  // non-critical, both fire-and-forget so they don't slow the sync response.
+  upsertMetadata(items)
+    .then(async () => {
+      const { backfillArtistGenresForUser } = await import('./artist-backfill');
+      return backfillArtistGenresForUser(userId);
+    })
+    .catch((err) =>
+      logger.warn({ userId, err: String(err) }, 'Metadata/genre backfill failed (non-critical)')
+    );
+
+  // Append to Redis sync log (last 5 entries per user)
+  appendSyncLog(userId, inserted, newCursor).catch(() => undefined);
+
+  logger.info({ userId, inserted, cursor: newCursor.toISOString() }, 'Sync complete');
+  return { inserted, cursor: newCursor, skipped: false };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function bumpFailureCount(userId: string, currentCount: number) {
+  const failureCount = currentCount + 1;
+  const needsReconnect = failureCount >= 10;
+  await db.spotifyAccount
+    .update({ where: { userId }, data: { failureCount, needsReconnect } })
+    .catch(() => undefined); // don't mask the original error
+  logger.warn({ userId, failureCount, needsReconnect }, 'Sync failure recorded');
+}
+
+async function upsertMetadata(items: RichPlayHistoryItem[]) {
+  const seenTracks = new Set<string>();
+  const tracks: {
+    id: string;
+    name: string;
+    artistNames: string[];
+    artistIds: string[];
+    albumName: string;
+    imageUrl: string | null;
+    durationMs: number;
+  }[] = [];
+
+  const seenArtists = new Set<string>();
+  const artists: { id: string; name: string }[] = [];
+
+  for (const { track } of items) {
+    if (!seenTracks.has(track.id)) {
+      seenTracks.add(track.id);
+      tracks.push({
+        id: track.id,
+        name: track.name,
+        artistNames: track.artists.map((a) => a.name),
+        artistIds: track.artists.map((a) => a.id),
+        albumName: track.album.name,
+        imageUrl: track.album.images[0]?.url ?? null,
+        durationMs: track.duration_ms,
+      });
+    }
+    for (const a of track.artists) {
+      if (seenArtists.has(a.id)) continue;
+      seenArtists.add(a.id);
+      artists.push({ id: a.id, name: a.name });
+    }
+  }
+
+  // Per-row upsert (not createMany + skipDuplicates) so existing tracks get
+  // their artistIds/album fields filled in when they were first inserted under
+  // an older sync that didn't capture them. Artist genre/imageUrl is left
+  // alone — that's the genre backfill job's responsibility.
+  await Promise.all(
+    tracks.map((t) =>
+      db.track.upsert({
+        where: { id: t.id },
+        create: t,
+        update: {
+          name: t.name,
+          artistNames: t.artistNames,
+          artistIds: t.artistIds,
+          albumName: t.albumName,
+          imageUrl: t.imageUrl,
+          durationMs: t.durationMs,
+        },
+      })
+    )
+  );
+
+  await Promise.all(
+    artists.map((a) =>
+      db.artist.upsert({
+        where: { id: a.id },
+        create: a,
+        update: { name: a.name },
+      })
+    )
+  );
+}
+
+async function appendSyncLog(userId: string, count: number, cursor: Date) {
+  const key = `sync:log:${userId}`;
+  const entry = JSON.stringify({
+    ts: new Date().toISOString(),
+    count,
+    cursor: cursor.toISOString(),
+  });
+  await redis.lpush(key, entry);
+  await redis.ltrim(key, 0, 4); // keep last 5
+}

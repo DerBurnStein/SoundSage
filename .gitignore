@@ -1,4 +1,26 @@
 node_modules/
 server/node_modules/
 pocs/**/node_modules/
+
+# Environment
 .env
+.env*.local
+
+# Next.js
+.next/
+out/
+
+# Build output
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sentry
+.sentryclirc
+
+# Editor
+.vs/
+*.suo
+*.user

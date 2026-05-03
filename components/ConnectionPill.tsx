@@ -1,116 +1,144 @@
-// SoundSage — ConnectionPill
-// Shows Spotify auth state in the masthead.
-// In production: replace the fetch with useSession() from next-auth/react.
-
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSession, signIn, signOut } from 'next-auth/react';
+import { useSession, signOut } from 'next-auth/react';
 
-interface AuthState {
-  loading:   boolean;
+interface SpotifyConnection {
   connected: boolean;
-  name:      string;
-  demo:      boolean;
+  spotifyUserId?: string;
+  lastSyncAt?: string | null;
+  needsReconnect?: boolean;
 }
 
 export function ConnectionPill() {
   const { data: session, status } = useSession();
+  const [spotify, setSpotify] = useState<SpotifyConnection | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
-  const auth: AuthState = {
-    loading:   status === 'loading',
-    connected: status === 'authenticated',
-    name:      session?.user?.name ?? 'Not connected',
-    demo:      false,
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    fetch('/api/spotify/connection')
+      .then((r) => r.json())
+      .then(setSpotify)
+      .catch(() => setSpotify({ connected: false }));
+  }, [status]);
+
+  const handleConnectSpotify = async () => {
+    setConnecting(true);
+    try {
+      const res = await fetch('/api/spotify/connect/start', { method: 'POST' });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('Connect Spotify failed:', res.status, text);
+        setConnecting(false);
+        return;
+      }
+      const body = (await res.json()) as { url?: string };
+      if (!body.url) {
+        console.error('Connect Spotify: no URL in response', body);
+        setConnecting(false);
+        return;
+      }
+      window.location.href = body.url;
+    } catch (err) {
+      console.error('Connect Spotify error:', err);
+      setConnecting(false);
+    }
   };
 
-  if (auth.loading) {
+  if (status === 'loading') {
     return (
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--muted)' }}>
-        ·  ·  ·
+        · · ·
       </span>
     );
   }
 
+  if (status === 'unauthenticated') return null;
+
+  const name = session?.user?.name ?? session?.user?.email ?? 'User';
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      {!auth.connected ? (
-        <button
-          onClick={() => signIn('spotify')}
-          style={{
-            border: '1px solid var(--ink)',
-            background: 'var(--ink)', color: 'var(--paper)',
-            fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 600,
-            letterSpacing: '0.04em', padding: '8px 16px', cursor: 'pointer',
-          }}
-        >
-          Connect Spotify
-        </button>
-      ) : (
-        <>
+
+      {/* Spotify status — hidden while loading connection state */}
+      {spotify !== null && (
+        !spotify.connected || spotify.needsReconnect ? (
+          <button
+            onClick={handleConnectSpotify}
+            disabled={connecting}
+            style={{
+              border: '1px solid var(--ink)',
+              background: 'var(--ink)',
+              color: 'var(--paper)',
+              fontFamily: 'var(--font-sans)',
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              padding: '8px 16px',
+              cursor: 'pointer',
+              opacity: connecting ? 0.6 : 1,
+            }}
+          >
+            {connecting ? '…' : spotify.needsReconnect ? 'Reconnect Spotify' : 'Connect Spotify'}
+          </button>
+        ) : (
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>
-              {auth.name}
+            <div style={{
+              fontFamily: 'var(--font-sans)',
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'var(--ink)',
+            }}>
+              {name}
             </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--muted)', letterSpacing: '0.05em' }}>
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 9,
+              color: 'var(--muted)',
+              letterSpacing: '0.05em',
+            }}>
               ● linked · syncing every 15m
             </div>
           </div>
-          <button
-            onClick={() => signOut()}
-            style={{
-              width: 36, height: 36, borderRadius: 18,
-              background: 'var(--ink)', color: 'var(--paper)',
-              border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontFamily: 'var(--font-serif)', fontWeight: 600, fontSize: 16,
-            }}
-          >
-            {auth.name.charAt(0).toUpperCase()}
-          </button>
-        </>
+        )
       )}
+
+      {/* Google account avatar — click to sign out */}
+      <button
+        onClick={() => signOut({ callbackUrl: '/' })}
+        title={`Signed in as ${session?.user?.email ?? ''} — click to sign out`}
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+          background: 'var(--ink)',
+          color: 'var(--paper)',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'var(--font-serif)',
+          fontWeight: 600,
+          fontSize: 16,
+          overflow: 'hidden',
+          padding: 0,
+          flexShrink: 0,
+        }}
+      >
+        {session?.user?.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={session.user.image}
+            alt={name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          name.charAt(0).toUpperCase()
+        )}
+      </button>
+
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────
-// NOTE: Wire up next-auth Spotify provider in:
-//   app/api/auth/[...nextauth]/route.ts
-//
-//   import NextAuth from 'next-auth';
-//   import SpotifyProvider from 'next-auth/providers/spotify';
-//
-//   export const { handlers, auth } = NextAuth({
-//     providers: [
-//       SpotifyProvider({
-//         clientId:     process.env.SPOTIFY_CLIENT_ID!,
-//         clientSecret: process.env.SPOTIFY_CLIENT_SECRET!,
-//         authorization: {
-//           params: {
-//             scope: [
-//               'user-read-recently-played',
-//               'user-read-currently-playing',
-//               'user-top-read',
-//               'user-read-email',
-//             ].join(' '),
-//           },
-//         },
-//       }),
-//     ],
-//     callbacks: {
-//       async jwt({ token, account }) {
-//         if (account) {
-//           token.accessToken  = account.access_token;
-//           token.refreshToken = account.refresh_token;
-//           token.expiresAt    = account.expires_at;
-//         }
-//         return token;
-//       },
-//       async session({ session, token }) {
-//         session.accessToken = token.accessToken as string;
-//         return session;
-//       },
-//     },
-//   });
-// ─────────────────────────────────────────────────────
