@@ -86,6 +86,67 @@ export async function spotifyGet<T>(path: string, accessToken: string): Promise<
   return res.json() as Promise<T>;
 }
 
+// ─── Artist by ID ─────────────────────────────────────────────────────────────
+// /v1/artists/{id} is the single-artist endpoint. Distinct from the multi-id
+// /v1/artists?ids=... which is Extended-Quota-only. The single endpoint
+// generally works under default quota.
+
+export interface SpotifyArtistDetails {
+  id: string;
+  name: string;
+  genres: string[];
+  images: { url: string; width: number; height: number }[];
+}
+
+export async function getArtistById(
+  id: string,
+  accessToken: string
+): Promise<SpotifyArtistDetails | null> {
+  try {
+    return await spotifyGet<SpotifyArtistDetails>(`/artists/${id}`, accessToken);
+  } catch (err) {
+    // 404: artist no longer exists on Spotify (rare but possible). Treat as
+    // "not found" rather than throwing.
+    if (String(err).includes('404')) return null;
+    throw err;
+  }
+}
+
+// ─── Artist search ────────────────────────────────────────────────────────────
+// Used as an image-only fallback for artists that aren't in /me/top/artists
+// but exist on Spotify (so we can show their cover). Uses a user token —
+// /v1/search works under default quota.
+
+interface SpotifySearchResult {
+  artists?: {
+    items: Array<{
+      id: string;
+      name: string;
+      images: { url: string; width: number; height: number }[];
+    }>;
+  };
+}
+
+/**
+ * Searches Spotify for an artist by name. Returns the image URL of the first
+ * exact (case-insensitive) name match, or null if none found. Avoids fuzzy
+ * matches to prevent picking the wrong "Beck" or similar.
+ */
+export async function searchArtistImage(
+  name: string,
+  accessToken: string
+): Promise<string | null> {
+  const data = await spotifyGet<SpotifySearchResult>(
+    `/search?q=${encodeURIComponent(name)}&type=artist&limit=5`,
+    accessToken
+  );
+
+  const items = data.artists?.items ?? [];
+  const target = name.toLowerCase().trim();
+  const match = items.find((a) => a.name.toLowerCase().trim() === target);
+  return match?.images?.[0]?.url ?? null;
+}
+
 // ─── App-level token (Client Credentials) ────────────────────────────────────
 // Used for endpoints that work with shared/global data (e.g. /artists).
 // Cached in-process until 60s before expiry. Single token is shared across
