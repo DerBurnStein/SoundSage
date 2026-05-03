@@ -11,6 +11,7 @@
 import { db } from './db';
 import { cached } from './cache';
 import type { ParsedRange } from './range';
+import { trackMood, quadrantOf, type MoodQuadrantId } from './mood';
 import type {
   ActivityStats,
   GenreStats,
@@ -1017,6 +1018,91 @@ export async function getSeasonalGenres(
         return { name, genres: top };
       });
       return { seasons };
+    }
+  );
+}
+
+// ─── Mood points (track-level energy/valence approximation) ──────────────────
+
+export interface MoodPoint {
+  id:       string;
+  name:     string;
+  artist:   string;
+  plays:    number;
+  /** 0..1 — calm to intense */
+  energy:   number;
+  /** 0..1 — cool to warm */
+  valence:  number;
+  quadrant: MoodQuadrantId;
+}
+
+/**
+ * Returns the user's top `limit` tracks each scored on the (energy, valence)
+ * plane via lib/mood.ts's track-level approximation. Used by the Mood
+ * Clusters destination page to plot a per-track scatter.
+ */
+export async function getMoodPoints(
+  userId: string,
+  limit = 300
+): Promise<MoodPoint[]> {
+  return cached<MoodPoint[]>(
+    `stats:${userId}:moodPoints:v1:${limit}`,
+    600,
+    async () => {
+      const playRows = await db.$queryRawUnsafe<{
+        track_id: string; plays: number;
+      }[]>(
+        `SELECT "trackId" AS track_id, COUNT(*)::int AS plays
+         FROM listening_events
+         WHERE "userId" = $1
+         GROUP BY "trackId"
+         ORDER BY plays DESC
+         LIMIT $2`,
+        userId,
+        limit
+      );
+      if (playRows.length === 0) return [];
+
+      const trackIds = playRows.map((r) => r.track_id);
+      const tracks = await db.track.findMany({
+        where: { id: { in: trackIds } },
+        select: {
+          id: true, name: true, artistNames: true, artistIds: true, durationMs: true,
+        },
+      });
+      const trackById = new Map(tracks.map((t) => [t.id, t]));
+
+      // Bulk-load genres for every artist referenced by any of these tracks.
+      const allArtistIds = [...new Set(tracks.flatMap((t) => t.artistIds))];
+      const artists = allArtistIds.length === 0
+        ? []
+        : await db.artist.findMany({
+            where: { id: { in: allArtistIds } },
+            select: { id: true, genres: true },
+          });
+      const genresByArtist = new Map(artists.map((a) => [a.id, a.genres]));
+
+      const points: MoodPoint[] = [];
+      for (const { track_id, plays } of playRows) {
+        const t = trackById.get(track_id);
+        if (!t) continue;
+        const artistGenres = t.artistIds.flatMap((id) => genresByArtist.get(id) ?? []);
+        const m = trackMood({
+          name:        t.name,
+          durationMs:  t.durationMs,
+          artistGenres,
+        });
+        points.push({
+          id:       track_id,
+          name:     t.name,
+          artist:   t.artistNames[0] ?? 'Unknown',
+          plays,
+          energy:   m.energy,
+          valence:  m.valence,
+          quadrant: quadrantOf(m.energy, m.valence),
+        });
+      }
+      return points;
     }
   );
 }

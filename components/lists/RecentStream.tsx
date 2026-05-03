@@ -4,6 +4,7 @@
 
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Caps, Mono, cleanTrackName } from '../primitives';
 import type { RecentEvent } from '../../types';
 
@@ -21,16 +22,6 @@ export function RecentStream({ events, loading }: RecentStreamProps) {
         ))}
       </div>
     );
-  }
-
-  // Format relative time label
-  function relTime(iso: string): string {
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60_000);
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
   }
 
   return (
@@ -71,12 +62,52 @@ export function RecentStream({ events, loading }: RecentStreamProps) {
                 </em>
               </div>
             </div>
-            <Mono style={{ fontSize: 10, color: 'var(--dim)', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
-              {relTime(ev.playedAt)}
-            </Mono>
+            <RelTime iso={ev.playedAt} />
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Relative-time label that's safe for SSR. Server (and the first client
+ * render) emit an empty span, then `useEffect` fills it in on mount and
+ * refreshes every 30s. Without this both server-rendered "32m ago" and
+ * client-hydrated "33m ago" would race the clock and trip the React
+ * hydration mismatch warning.
+ */
+function RelTime({ iso }: { iso: string }) {
+  const [text, setText] = useState<string>('');
+
+  useEffect(() => {
+    const compute = () => {
+      const diff = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(diff / 60_000);
+      if (mins < 1)   return 'just now';
+      if (mins < 60)  return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24)   return `${hrs}h ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    };
+    setText(compute());
+    const id = setInterval(() => setText(compute()), 30_000);
+    return () => clearInterval(id);
+  }, [iso]);
+
+  return (
+    <span
+      suppressHydrationWarning
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontVariantNumeric: 'tabular-nums',
+        fontSize: 10,
+        color: 'var(--dim)',
+        letterSpacing: '0.05em',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {text}
+    </span>
   );
 }

@@ -16,7 +16,7 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Caps, Mono, hourLabel } from '../primitives';
 import type { ActivityBucket } from '../../types';
 
@@ -39,41 +39,39 @@ const CHART_CX = PAD_L + INNER_W / 2;
 const MAX_LABELS = 14;
 
 const ZOOM_DURATION = 650;
-const ZOOM_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+const BAR_DURATION  = 550;
+const EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+const BAR_TRANSITION =
+  `x ${BAR_DURATION}ms ${EASING}, y ${BAR_DURATION}ms ${EASING}, ` +
+  `width ${BAR_DURATION}ms ${EASING}, height ${BAR_DURATION}ms ${EASING}, ` +
+  `fill 0.12s`;
 
 export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
   const [hover, setHover] = useState<number | null>(null);
-  // `scale` controls a horizontal squash/stretch on the bars group. It lives
-  // at 1 in steady state. When data.length changes we briefly snap it to the
-  // ratio that makes the *new* chart look like the *old* one (bars at old
-  // density), then animate back to 1. CSS handles the actual interpolation.
-  const [scale, setScale] = useState(1);
+  const groupRef = useRef<SVGGElement>(null);
   const prevLenRef = useRef(data.length);
 
-  useEffect(() => {
+  // useLayoutEffect runs synchronously after DOM mutations and *before* the
+  // browser paints, so we can imperatively snap the group's transform to
+  // the initial ratio (no transition) and immediately schedule the
+  // animation back to 1 (with transition). This avoids the wobble you get
+  // when the snap itself is animated by a state-driven CSS transition.
+  useLayoutEffect(() => {
     const oldLen = prevLenRef.current;
     const newLen = data.length;
-    if (oldLen !== newLen && oldLen > 0 && newLen > 0) {
-      // newLen / oldLen: when growing (newLen > oldLen), > 1 → bars are
-      // visually wider and the outer ones go beyond the viewBox. When the
-      // scale settles to 1 those outer bars fly inward from both edges.
-      // When shrinking, the chart compresses to fit and the new (fewer)
-      // bars expand outward.
-      setScale(newLen / oldLen);
-      // Two rAFs so the snap-frame paints before we animate back to 1 —
-      // otherwise React might batch the two state updates into one render
-      // and we'd never see the initial scale.
-      let id2: number | null = null;
-      const id1 = requestAnimationFrame(() => {
-        id2 = requestAnimationFrame(() => setScale(1));
-      });
-      prevLenRef.current = newLen;
-      return () => {
-        cancelAnimationFrame(id1);
-        if (id2 != null) cancelAnimationFrame(id2);
-      };
-    }
+    const g = groupRef.current;
     prevLenRef.current = newLen;
+    if (!g || oldLen === newLen || oldLen === 0 || newLen === 0) return;
+
+    const ratio = newLen / oldLen;
+    // Step 1: kill the transition, set the snap scale instantly. The
+    // forced reflow commits this state before paint.
+    g.style.transition = 'none';
+    g.style.transform = `scaleX(${ratio})`;
+    void g.getBoundingClientRect();
+    // Step 2: re-enable the transition, animate back to identity scale.
+    g.style.transition = `transform ${ZOOM_DURATION}ms ${EASING}`;
+    g.style.transform = 'scaleX(1)';
   }, [data.length]);
 
   if (loading || !data.length) return <ActivityRibbonSkeleton />;
@@ -176,17 +174,18 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
           })}
 
           {/* Bars + per-bar labels — wrapped in a scaling group whose origin
-              is the chart's horizontal centre. When data.length changes the
-              scale briefly snaps to (newLen / oldLen) so the chart matches
-              the prior density, then transitions back to 1. Edge bars go
+              is the chart's horizontal centre. When data.length changes,
+              useLayoutEffect imperatively snaps the scale to (newLen/oldLen)
+              with no transition, then animates it back to 1. Edge bars go
               beyond the viewBox during the snap and slide back in via the
               transition — that's the "from both walls" effect. */}
           <g
+            ref={groupRef}
             style={{
-              transform: `scaleX(${scale})`,
+              transform: 'scaleX(1)',
               transformOrigin: `${CHART_CX}px ${BASELINE}px`,
               transformBox: 'view-box',
-              transition: `transform ${ZOOM_DURATION}ms ${ZOOM_EASING}`,
+              transition: `transform ${ZOOM_DURATION}ms ${EASING}`,
             }}
           >
             {data.map((d, i) => {
@@ -213,6 +212,7 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
                     width={stepX}
                     height={INNER_H}
                     fill="transparent"
+                    style={{ transition: BAR_TRANSITION }}
                   />
                   <rect
                     x={x}
@@ -220,7 +220,7 @@ export function ActivityRibbon({ data, grain, loading }: ActivityRibbonProps) {
                     width={barW}
                     height={bh}
                     fill={isPk ? 'var(--ember)' : isHv ? 'var(--moss-2)' : 'var(--ink)'}
-                    style={{ transition: 'fill .12s' }}
+                    style={{ transition: BAR_TRANSITION }}
                   />
 
                   {isPk && (

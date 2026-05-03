@@ -1,15 +1,19 @@
 // SoundSage — Pattern view visualizations
 // Editorial charts for the four /patterns?view=... destination pages:
-//   • WeekdayWeekendChart — bar chart by weekday + summary split, interactive
-//   • TimeOfDayChart      — proportion bar + four band cards, interactive
-//   • SeasonalGenreGrid   — four-season genre lists, side by side
-//   • MoodClustersChart   — 2D valence×energy scatter derived from genres
+//   • WeekdayWeekendChart  — bar chart by weekday + summary split, interactive
+//   • TimeOfDayChart       — proportion bar + four band cards, interactive
+//   • SeasonalGenreGrid    — four-season genre lists, side by side
+//   • MoodProfile          — share-of-plays per mood quadrant
+//   • MoodCloudChart       — per-track scatter on the energy × valence plane
+//   • TrackQuadrantBreakdown — top tracks per quadrant (textual companion)
 
 'use client';
 
-import { useState } from 'react';
-import { Caps, Mono } from '../primitives';
+import { useMemo, useState } from 'react';
+import { Caps, Mono, Display, pad2, cleanTrackName } from '../primitives';
 import type { GenreStat } from '../../types';
+import type { MoodPoint } from '@/lib/page-data';
+import { MOOD_QUADRANTS, type MoodQuadrantId } from '@/lib/mood';
 
 const TRANSITION = '500ms cubic-bezier(0.22, 1, 0.36, 1)';
 
@@ -34,9 +38,6 @@ export function WeekdayWeekendChart({
   weekendMinsAvg,
   byDay,
 }: WeekdayWeekendProps) {
-  // Hover state: which group ('weekday' | 'weekend') and which day index (0-6)
-  // are currently hovered. Either or both can be set; clearing happens on
-  // mouse-leave of the chart container.
   const [hoverGroup, setHoverGroup] = useState<null | 'weekday' | 'weekend'>(null);
   const [hoverDay, setHoverDay]     = useState<number | null>(null);
 
@@ -46,8 +47,6 @@ export function WeekdayWeekendChart({
   const max = Math.max(...byDay.map((d) => d.plays), 1);
 
   const focusedDay = hoverDay != null ? byDay[hoverDay] : null;
-  // A "group" is implied by either explicit group hover OR the group of the
-  // currently hovered day. Used to dim the opposite half of the split bar.
   const activeGroup: 'weekday' | 'weekend' | null = hoverGroup
     ?? (hoverDay != null ? (hoverDay >= 5 ? 'weekend' : 'weekday') : null);
 
@@ -172,8 +171,6 @@ function FocusReadout({
   weekdayPlays: number;
   weekendPlays: number;
 }) {
-  // The right-aligned readout reflects whatever the user is currently
-  // pointing at. With no hover it summarises the overall split.
   if (!day) {
     return (
       <Mono style={{ fontSize: 11, color: 'var(--dim)' }}>
@@ -272,7 +269,6 @@ export function TimeOfDayChart({ morning, midday, evening, night, total }: TimeO
   const focusedCount = focused ? counts[focused.key] : 0;
   const focusedShare = total > 0 && focused ? focusedCount / total : 0;
 
-  // The peak band — used as default heading focus when nothing is hovered.
   const peakKey: TodKey = (TOD_BANDS.reduce((a, b) =>
     counts[a.key] >= counts[b.key] ? a : b
   )).key;
@@ -519,127 +515,229 @@ export function SeasonalGenreGrid({ seasons }: SeasonalGenresProps) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mood clusters
+// Mood clusters — track-level scatter
 //
-// We don't have Spotify audio features ingested (the API endpoint is closed
-// to new apps), so we approximate each genre's mood via a regex-based
-// genre→(energy, valence) lookup. Bubbles are sized by share-of-plays and
-// placed on a 2D plane, with quadrant labels indicating the editorial mood
-// of each region.
+// Each track gets an (energy, valence) score from lib/mood.ts which blends
+// artist genres + track-name keyword sentiment + duration. The cloud chart
+// plots every track as a small dot — labels live in a hover tooltip rather
+// than baked onto the chart, so nothing collides visually. The breakdown
+// panel below lists the top tracks per quadrant for textual reading.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MOOD_QUADRANTS = [
-  { id: 'bright',         label: 'Bright',        sublabel: 'high energy · warm',     x: 0.78, y: 0.16, color: 'var(--gold)'  },
-  { id: 'restless',       label: 'Restless',      sublabel: 'high energy · cool',     x: 0.22, y: 0.16, color: 'var(--ember)' },
-  { id: 'peaceful',       label: 'Peaceful',      sublabel: 'low energy · warm',      x: 0.78, y: 0.84, color: 'var(--moss)'  },
-  { id: 'contemplative',  label: 'Contemplative', sublabel: 'low energy · cool',      x: 0.22, y: 0.84, color: 'var(--plum)'  },
-] as const;
+const QUADRANT_BY_ID: Record<MoodQuadrantId, typeof MOOD_QUADRANTS[number]> =
+  Object.fromEntries(MOOD_QUADRANTS.map((q) => [q.id, q])) as Record<MoodQuadrantId, typeof MOOD_QUADRANTS[number]>;
 
-/**
- * Map a genre name to (energy, valence) on [0..1]. Energy = 0 calm, 1 intense.
- * Valence = 0 dark/cool, 1 bright/warm. Hand-tuned regex categories — adjust
- * here as the genre vocabulary evolves.
- */
-function genreMood(name: string): { energy: number; valence: number } {
-  const n = name.toLowerCase();
-  // Bright (high energy, high valence)
-  if (/\b(dance|disco|funk|salsa|samba|reggaeton|edm|electro\s?pop|happy|party|tropical|afrobeats?)\b/.test(n))
-    return { energy: 0.85, valence: 0.85 };
-  if (/\b(pop|k-pop|j-pop|bubblegum)\b/.test(n))
-    return { energy: 0.75, valence: 0.8 };
-  // Restless (high energy, low valence)
-  if (/\b(metal|hardcore|punk|thrash|grindcore|black metal|death|industrial|grunge|emo|screamo)\b/.test(n))
-    return { energy: 0.92, valence: 0.22 };
-  if (/\b(garage rock|noise|post-punk|drum and bass|dnb|breakcore|hyperpop)\b/.test(n))
-    return { energy: 0.82, valence: 0.35 };
-  // Peaceful (low energy, high valence)
-  if (/\b(folk|bossa|acoustic|singer-songwriter|country|americana|chamber|gospel|lounge)\b/.test(n))
-    return { energy: 0.32, valence: 0.7 };
-  if (/\b(jazz|smooth jazz|soul|r&b|neo-soul|bedroom pop)\b/.test(n))
-    return { energy: 0.45, valence: 0.65 };
-  // Contemplative (low energy, low valence)
-  if (/\b(ambient|drone|new age|meditation|asmr)\b/.test(n))
-    return { energy: 0.18, valence: 0.4 };
-  if (/\b(classical|baroque|romantic|orchestral|piano|score|soundtrack)\b/.test(n))
-    return { energy: 0.4, valence: 0.45 };
-  if (/\b(lo-?fi|chillwave|chillhop|slowcore|shoegaze|dreampop|dream pop|sad)\b/.test(n))
-    return { energy: 0.32, valence: 0.38 };
-  if (/\bpost-rock\b/.test(n))
-    return { energy: 0.55, valence: 0.4 };
-  // Mid-energy mid-valence broad categories
-  if (/\b(rock|alt rock|alternative|hard rock|prog)\b/.test(n))
-    return { energy: 0.7, valence: 0.5 };
-  if (/\bindie\b/.test(n))
-    return { energy: 0.55, valence: 0.55 };
-  if (/\b(electronic|techno|house|trance|synth|idm|ambient techno)\b/.test(n))
-    return { energy: 0.7, valence: 0.5 };
-  if (/\b(hip hop|hip-hop|rap|trap|drill|grime)\b/.test(n))
-    return { energy: 0.65, valence: 0.5 };
-  if (/\b(reggae|ska|dub)\b/.test(n))
-    return { energy: 0.55, valence: 0.65 };
-  if (/\b(blues)\b/.test(n))
-    return { energy: 0.5, valence: 0.45 };
-  // Default — center
-  return { energy: 0.5, valence: 0.5 };
+function labelFor(id: MoodQuadrantId): string {
+  return QUADRANT_BY_ID[id]?.label.toLowerCase() ?? id;
 }
 
-function quadrantOf(energy: number, valence: number): typeof MOOD_QUADRANTS[number]['id'] {
-  if (energy >= 0.5 && valence >= 0.5) return 'bright';
-  if (energy >= 0.5 && valence <  0.5) return 'restless';
-  if (energy <  0.5 && valence >= 0.5) return 'peaceful';
-  return 'contemplative';
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-interface MoodClustersProps {
-  genres: GenreStat[];
+/** Stable string hash so each track gets the same jitter every render. */
+function stableHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
-export function MoodClustersChart({ genres }: MoodClustersProps) {
+// ─── MoodProfile — share of plays per quadrant ───────────────────────────────
+
+interface MoodProfileProps {
+  points: MoodPoint[];
+}
+
+export function MoodProfile({ points }: MoodProfileProps) {
+  const [hover, setHover] = useState<MoodQuadrantId | null>(null);
+
+  const totals: Record<MoodQuadrantId, number> = useMemo(() => {
+    const t: Record<MoodQuadrantId, number> = { bright: 0, restless: 0, peaceful: 0, contemplative: 0 };
+    for (const p of points) t[p.quadrant] += p.plays;
+    return t;
+  }, [points]);
+
+  if (points.length === 0) return null;
+  const totalPlays = totals.bright + totals.restless + totals.peaceful + totals.contemplative;
+  if (totalPlays === 0) return null;
+
+  const dominantId = (Object.entries(totals) as [MoodQuadrantId, number][])
+    .sort((a, b) => b[1] - a[1])[0]![0];
+  const dominant = QUADRANT_BY_ID[dominantId];
+  const focused  = hover ? QUADRANT_BY_ID[hover] : null;
+
+  return (
+    <section
+      style={{ padding: '32px 28px 28px', borderBottom: '1px solid var(--rule)' }}
+      onMouseLeave={() => setHover(null)}
+    >
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+        <Caps>Fig. 一 — Mood profile</Caps>
+        <h3
+          style={{
+            fontFamily: 'var(--font-serif)',
+            fontWeight: 400,
+            fontSize: 24,
+            marginTop: 8,
+            marginBottom: 22,
+            letterSpacing: '-0.01em',
+            minHeight: '1.4em',
+          }}
+        >
+          {focused ? (
+            <>
+              <em style={{ color: focused.color }}>{focused.label}</em>{' '}
+              <span style={{ color: 'var(--muted)' }}>·</span>{' '}
+              <Mono style={{ fontSize: 16 }}>
+                {((totals[focused.id] / totalPlays) * 100).toFixed(1)}%
+              </Mono>
+              <span style={{ color: 'var(--dim)' }}>
+                {' · '}{focused.sublabel}
+              </span>
+            </>
+          ) : (
+            <>
+              Mostly <em style={{ color: dominant.color }}>{dominant.label.toLowerCase()}</em>
+              <span style={{ color: 'var(--muted)' }}>{' · '}</span>
+              <Mono style={{ fontSize: 16 }}>
+                {((totals[dominantId] / totalPlays) * 100).toFixed(0)}%
+              </Mono>
+              <span style={{ color: 'var(--dim)' }}>{' of plays'}</span>
+            </>
+          )}
+        </h3>
+
+        <div style={{ display: 'flex', height: 22, border: '1px solid var(--rule)', marginBottom: 14 }}>
+          {MOOD_QUADRANTS.map((q) => {
+            const share = totals[q.id] / totalPlays;
+            const isHv = hover === q.id;
+            return (
+              <div
+                key={q.id}
+                onMouseEnter={() => setHover(q.id)}
+                onMouseLeave={() => setHover(null)}
+                style={{
+                  width: `${share * 100}%`,
+                  background: q.color,
+                  borderRight: '1px solid var(--paper)',
+                  cursor: 'default',
+                  outline: isHv ? '2px solid var(--ink)' : 'none',
+                  outlineOffset: isHv ? -2 : 0,
+                  opacity: hover == null || isHv ? 1 : 0.55,
+                  transition: `width ${TRANSITION}, opacity 0.15s, outline 0.15s`,
+                }}
+                title={`${q.label}: ${(share * 100).toFixed(1)}%`}
+              />
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 12 }}>
+          {MOOD_QUADRANTS.map((q) => {
+            const share = totals[q.id] / totalPlays;
+            const isHv  = hover === q.id;
+            return (
+              <div
+                key={q.id}
+                onMouseEnter={() => setHover(q.id)}
+                onMouseLeave={() => setHover(null)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  paddingBottom: 6,
+                  borderBottom: '1px dotted var(--rule)',
+                  opacity: hover == null || isHv ? 1 : 0.55,
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                <span style={{ width: 10, height: 10, background: q.color, display: 'inline-block', flexShrink: 0 }} />
+                <span
+                  style={{
+                    fontFamily: 'var(--font-serif)',
+                    fontSize: 15,
+                    color: 'var(--ink)',
+                    flex: 1,
+                    fontWeight: isHv ? 600 : 400,
+                  }}
+                >
+                  {q.label}
+                </span>
+                <Mono style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  {(share * 100).toFixed(0)}%
+                </Mono>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── MoodCloudChart — per-track scatter, no inline labels ─────────────────────
+
+interface MoodCloudProps {
+  points: MoodPoint[];
+}
+
+export function MoodCloudChart({ points }: MoodCloudProps) {
   const [hover, setHover] = useState<number | null>(null);
 
-  if (genres.length === 0) {
-    return <MoodClustersEmpty />;
-  }
+  // Stable jitter per track (deterministic by id) so coincident tracks fan
+  // out into a small visual cluster instead of stacking on a single pixel.
+  const jittered = useMemo(() => {
+    return points.map((p) => {
+      const h  = stableHash(p.id);
+      const jx = (((h        & 0xff) / 255) - 0.5) * 0.06; // ±0.03
+      const jy = ((((h >> 8) & 0xff) / 255) - 0.5) * 0.06;
+      return {
+        ...p,
+        valenceJ: clamp(p.valence + jx, 0.03, 0.97),
+        energyJ:  clamp(p.energy  + jy, 0.03, 0.97),
+      };
+    });
+  }, [points]);
 
-  // Layout constants — matches HourlyMountain's 5:1 viewBox ratio so the
-  // chart slots into the same editorial "band".
-  const W = 1400, H = 560, PAD = 64;
+  if (points.length === 0) return <MoodClustersEmpty />;
+
+  // Layout — same 5:1 footprint as HourlyMountain so the band reads consistently.
+  const W = 1400, H = 600, PAD = 64;
   const innerW = W - PAD * 2;
   const innerH = H - PAD * 2;
 
-  // Plot points: x = valence (0 left → 1 right), y = energy (0 bottom → 1 top).
-  // We invert y because SVG y grows downward.
-  const points = genres.map((g) => {
-    const m = genreMood(g.name);
-    return {
-      ...g,
-      energy:  m.energy,
-      valence: m.valence,
-      cx: PAD + m.valence * innerW,
-      cy: PAD + (1 - m.energy) * innerH,
-      // Bubble radius scales with share. Min 8px, max ~64px — sqrt scaling
-      // so visual area is proportional to share.
-      r: 8 + Math.sqrt(g.share) * 56,
-      quadrant: quadrantOf(m.energy, m.valence),
-    };
-  });
-  const maxR = Math.max(...points.map((p) => p.r), 1);
+  const maxPlays = Math.max(...points.map((p) => p.plays), 1);
 
-  // Counts of plays per quadrant — for the corner totals.
-  const totalPlays = genres.reduce((s, g) => s + g.plays, 0);
-  const quadrantTotals: Record<string, number> = {};
-  for (const p of points) {
-    quadrantTotals[p.quadrant] = (quadrantTotals[p.quadrant] ?? 0) + p.plays;
+  // Quadrant totals for the corner readouts.
+  const totalPlays = points.reduce((s, p) => s + p.plays, 0);
+  const quadrantTotals: Record<MoodQuadrantId, number> = {
+    bright: 0, restless: 0, peaceful: 0, contemplative: 0,
+  };
+  for (const p of points) quadrantTotals[p.quadrant] += p.plays;
+
+  const focused = hover != null ? jittered[hover] : null;
+  const focusedQ = focused ? QUADRANT_BY_ID[focused.quadrant] : null;
+
+  // Tooltip placement — keep inside the chart bounds.
+  let tipX = 0, tipY = 0, tipAnchor: 'start' | 'end' = 'start';
+  if (focused) {
+    const cx = PAD + focused.valenceJ * innerW;
+    const cy = PAD + (1 - focused.energyJ) * innerH;
+    const onRightHalf = focused.valenceJ > 0.55;
+    tipAnchor = onRightHalf ? 'end' : 'start';
+    tipX = onRightHalf ? cx - 14 : cx + 14;
+    tipY = cy - 12;
   }
-
-  const focused = hover != null ? points[hover] : null;
 
   return (
     <section style={{ padding: '32px 28px 56px', borderBottom: '1px solid var(--rule)' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 18 }}>
           <div>
-            <Caps>Fig. 一 — Mood quadrants</Caps>
+            <Caps>Fig. 二 — Track mood cloud</Caps>
             <h3
               style={{
                 fontFamily: 'var(--font-serif)',
@@ -650,15 +748,17 @@ export function MoodClustersChart({ genres }: MoodClustersProps) {
                 minHeight: '1.4em',
               }}
             >
-              {focused ? (
+              {focused && focusedQ ? (
                 <>
-                  <em>{focused.name}</em>{' '}
+                  <em>{cleanTrackName(focused.name)}</em>{' '}
                   <span style={{ color: 'var(--muted)' }}>·</span>{' '}
-                  <Mono style={{ fontSize: 16 }}>{(focused.share * 100).toFixed(1)}%</Mono>
-                  <span style={{ color: 'var(--dim)' }}>{' · '}{labelFor(focused.quadrant)}</span>
+                  <Mono style={{ fontSize: 16 }}>{focused.plays.toLocaleString()} plays</Mono>
+                  <span style={{ color: focusedQ.color }}>{' · '}{labelFor(focused.quadrant)}</span>
                 </>
               ) : (
-                <>Energy &amp; valence, by genre</>
+                <>
+                  {points.length.toLocaleString()} tracks across the energy &amp; valence plane
+                </>
               )}
             </h3>
           </div>
@@ -676,9 +776,9 @@ export function MoodClustersChart({ genres }: MoodClustersProps) {
           {/* Outer frame */}
           <rect
             x={PAD} y={PAD} width={innerW} height={innerH}
-            fill="var(--paper-2)" stroke="var(--rule)" strokeWidth="1"
+            fill="var(--paper-2)" stroke="var(--rule)" strokeWidth={1}
           />
-          {/* Axes — center crosshair dividing into four quadrants */}
+          {/* Crosshair through the chart's centre — divides quadrants. */}
           <line
             x1={PAD + innerW / 2} x2={PAD + innerW / 2}
             y1={PAD} y2={PAD + innerH}
@@ -690,14 +790,15 @@ export function MoodClustersChart({ genres }: MoodClustersProps) {
             stroke="var(--rule)" strokeOpacity={0.3} strokeDasharray="3 5"
           />
 
-          {/* Quadrant labels in the corners */}
+          {/* Quadrant labels in the corners. Subtle so they don't compete
+              with the dot cloud, but always present for orientation. */}
           {MOOD_QUADRANTS.map((q) => {
             const cx = PAD + q.x * innerW;
             const cy = PAD + q.y * innerH;
-            const total = quadrantTotals[q.id] ?? 0;
+            const total = quadrantTotals[q.id];
             const share = totalPlays > 0 ? total / totalPlays : 0;
             return (
-              <g key={q.id}>
+              <g key={q.id} pointerEvents="none">
                 <text
                   x={cx} y={cy - 14}
                   textAnchor="middle"
@@ -736,75 +837,97 @@ export function MoodClustersChart({ genres }: MoodClustersProps) {
           <text
             x={PAD - 12} y={PAD + 8}
             textAnchor="end" fontFamily="var(--font-mono)" fontSize="10"
-            fill="var(--dim)" letterSpacing="0.08em"
+            fill="var(--dim)" letterSpacing="0.08em" pointerEvents="none"
           >HIGH ENERGY</text>
           <text
             x={PAD - 12} y={PAD + innerH}
             textAnchor="end" fontFamily="var(--font-mono)" fontSize="10"
-            fill="var(--dim)" letterSpacing="0.08em"
+            fill="var(--dim)" letterSpacing="0.08em" pointerEvents="none"
           >LOW ENERGY</text>
           <text
             x={PAD} y={H - PAD + 22}
             textAnchor="start" fontFamily="var(--font-mono)" fontSize="10"
-            fill="var(--dim)" letterSpacing="0.08em"
+            fill="var(--dim)" letterSpacing="0.08em" pointerEvents="none"
           >COOL · LOW VALENCE</text>
           <text
             x={PAD + innerW} y={H - PAD + 22}
             textAnchor="end" fontFamily="var(--font-mono)" fontSize="10"
-            fill="var(--dim)" letterSpacing="0.08em"
+            fill="var(--dim)" letterSpacing="0.08em" pointerEvents="none"
           >WARM · HIGH VALENCE</text>
 
-          {/* Genre bubbles */}
-          {points.map((p, i) => {
+          {/* Track dots */}
+          {jittered.map((p, i) => {
+            const cx = PAD + p.valenceJ * innerW;
+            const cy = PAD + (1 - p.energyJ) * innerH;
+            // Radius scales sublinearly with plays so a runaway top track
+            // doesn't dominate the cloud.
+            const r  = 3 + Math.sqrt(p.plays / maxPlays) * 9;
             const isHv = hover === i;
-            const dim = hover != null && !isHv;
-            const q = MOOD_QUADRANTS.find((qq) => qq.id === p.quadrant)!;
+            const dim  = hover != null && !isHv;
+            const q = QUADRANT_BY_ID[p.quadrant];
             return (
-              <g
-                key={p.name}
+              <circle
+                key={p.id}
+                cx={cx}
+                cy={cy}
+                r={isHv ? r + 2 : r}
+                fill={q.color}
+                fillOpacity={dim ? 0.10 : 0.55}
+                stroke={isHv ? 'var(--ink)' : 'transparent'}
+                strokeWidth={isHv ? 1.5 : 0}
                 onMouseEnter={() => setHover(i)}
-                onMouseLeave={() => setHover(null)}
-                style={{ cursor: 'default' }}
-              >
-                <circle
-                  cx={p.cx}
-                  cy={p.cy}
-                  r={p.r}
-                  fill={q.color}
-                  fillOpacity={dim ? 0.2 : 0.55}
-                  stroke={isHv ? 'var(--ink)' : q.color}
-                  strokeWidth={isHv ? 2 : 1}
-                  style={{ transition: 'fill-opacity 0.15s, stroke-width 0.15s' }}
-                />
-                {/* Show the label inside for big bubbles, beside for small */}
-                {p.r > maxR * 0.5 ? (
-                  <text
-                    x={p.cx} y={p.cy + 4}
-                    textAnchor="middle"
-                    fontFamily="var(--font-serif)"
-                    fontSize={Math.min(16, p.r * 0.45)}
-                    fill="var(--ink)"
-                    pointerEvents="none"
-                    opacity={dim ? 0.4 : 1}
-                  >
-                    {p.name}
-                  </text>
-                ) : (
-                  <text
-                    x={p.cx + p.r + 4} y={p.cy + 3}
-                    textAnchor="start"
-                    fontFamily="var(--font-serif)"
-                    fontSize="11"
-                    fill="var(--ink)"
-                    pointerEvents="none"
-                    opacity={dim ? 0.35 : 0.85}
-                  >
-                    {p.name}
-                  </text>
-                )}
-              </g>
+                style={{
+                  cursor: 'default',
+                  transition: 'fill-opacity 0.12s, stroke-width 0.12s, r 0.12s',
+                }}
+              />
             );
           })}
+
+          {/* Hover tooltip card — single card, never overlaps with itself. */}
+          {focused && focusedQ && (
+            <g pointerEvents="none">
+              <rect
+                x={tipAnchor === 'end' ? tipX - 280 : tipX}
+                y={tipY - 56}
+                width={280}
+                height={66}
+                fill="var(--paper)"
+                stroke="var(--ink)"
+                strokeWidth={1}
+              />
+              <text
+                x={tipAnchor === 'end' ? tipX - 268 : tipX + 12}
+                y={tipY - 36}
+                fontFamily="var(--font-serif)"
+                fontSize="14"
+                fontWeight="500"
+                fill="var(--ink)"
+              >
+                {truncate(cleanTrackName(focused.name), 36)}
+              </text>
+              <text
+                x={tipAnchor === 'end' ? tipX - 268 : tipX + 12}
+                y={tipY - 20}
+                fontFamily="var(--font-mincho)"
+                fontStyle="italic"
+                fontSize="12"
+                fill="var(--muted)"
+              >
+                {truncate(focused.artist, 36)}
+              </text>
+              <text
+                x={tipAnchor === 'end' ? tipX - 268 : tipX + 12}
+                y={tipY - 4}
+                fontFamily="var(--font-mono)"
+                fontSize="10"
+                fill={focusedQ.color}
+                letterSpacing="0.06em"
+              >
+                {focused.plays} PLAYS · {focusedQ.label.toUpperCase()}
+              </text>
+            </g>
+          )}
         </svg>
 
         <p
@@ -817,19 +940,167 @@ export function MoodClustersChart({ genres }: MoodClustersProps) {
             lineHeight: 1.5,
           }}
         >
-          Mood coordinates are derived from each genre's editorial profile —
-          Spotify's audio-features endpoint is no longer open to new apps, so
-          this view approximates valence and energy via genre rather than
-          per-track signal.
+          Mood coordinates approximate energy and valence per track by blending
+          the artist's genres with the track-name sentiment and the track's
+          duration — Spotify's audio-features endpoint is no longer open to
+          new apps, so this view is a structured proxy rather than a per-track
+          signal.
         </p>
       </div>
     </section>
   );
 }
 
-function labelFor(id: string): string {
-  return MOOD_QUADRANTS.find((q) => q.id === id)?.label.toLowerCase() ?? id;
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
+
+// ─── TrackQuadrantBreakdown — top tracks per quadrant ─────────────────────────
+
+interface TrackQuadrantBreakdownProps {
+  points: MoodPoint[];
+}
+
+export function TrackQuadrantBreakdown({ points }: TrackQuadrantBreakdownProps) {
+  // Hooks must run unconditionally — compute bucketed before the early
+  // return so the hooks order stays stable across renders.
+  const bucketed: Record<MoodQuadrantId, MoodPoint[]> = useMemo(() => {
+    const b: Record<MoodQuadrantId, MoodPoint[]> = {
+      bright: [], restless: [], peaceful: [], contemplative: [],
+    };
+    for (const p of points) b[p.quadrant].push(p);
+    for (const id of Object.keys(b) as MoodQuadrantId[]) {
+      b[id].sort((a, b2) => b2.plays - a.plays);
+    }
+    return b;
+  }, [points]);
+
+  if (points.length === 0) return null;
+
+  return (
+    <section style={{ padding: '32px 28px 56px', borderBottom: '1px solid var(--rule)' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+        <Caps>Fig. 三 — Top tracks by quadrant</Caps>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 16,
+            marginTop: 24,
+          }}
+        >
+          {MOOD_QUADRANTS.map((q) => {
+            const items = bucketed[q.id];
+            const total = items.length;
+            const top = items.slice(0, 6);
+            return (
+              <div
+                key={q.id}
+                style={{
+                  border: '1px solid var(--rule)',
+                  padding: '18px 20px 20px',
+                  background: 'var(--paper)',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    marginBottom: 4,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-serif)',
+                      fontStyle: 'italic',
+                      fontSize: 20,
+                      color: q.color,
+                    }}
+                  >
+                    {q.label}
+                  </span>
+                  <Mono style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    {total} {total === 1 ? 'track' : 'tracks'}
+                  </Mono>
+                </div>
+                <Mono
+                  style={{
+                    fontSize: 9,
+                    color: 'var(--dim)',
+                    letterSpacing: '0.08em',
+                    marginBottom: 14,
+                    display: 'block',
+                  }}
+                >
+                  {q.sublabel.toUpperCase()}
+                </Mono>
+
+                {top.length === 0 ? (
+                  <Mono style={{ fontSize: 11, color: 'var(--dim)' }}>— no tracks —</Mono>
+                ) : (
+                  top.map((t, i) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '24px 1fr auto',
+                        alignItems: 'baseline',
+                        gap: 10,
+                        padding: '8px 0',
+                        borderBottom: i === top.length - 1 ? 'none' : '1px dotted var(--rule)',
+                      }}
+                    >
+                      <Display
+                        size={14}
+                        weight={400}
+                        style={{ color: i === 0 ? q.color : 'var(--dim)', lineHeight: 1 }}
+                      >
+                        {pad2(i + 1)}
+                      </Display>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontFamily: 'var(--font-serif)',
+                            fontSize: 13,
+                            color: 'var(--ink)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {cleanTrackName(t.name)}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: 'var(--font-mincho)',
+                            fontStyle: 'italic',
+                            fontSize: 11,
+                            color: 'var(--muted)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {t.artist}
+                        </div>
+                      </div>
+                      <Mono style={{ fontSize: 11, color: 'var(--ink)', flexShrink: 0 }}>
+                        {t.plays}
+                      </Mono>
+                    </div>
+                  ))
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
 
 function MoodClustersEmpty() {
   return (
@@ -856,7 +1127,7 @@ function MoodClustersEmpty() {
             marginBottom: 12,
           }}
         >
-          No genre signal yet.
+          Not enough plays yet.
         </h3>
         <p
           style={{
@@ -867,14 +1138,15 @@ function MoodClustersEmpty() {
             lineHeight: 1.55,
           }}
         >
-          Mood quadrants are derived from the genres of artists you listen to.
-          Once a few plays come in, this view will plot each genre on the
-          energy × valence plane.
+          Once a few tracks have been logged this view will plot each one on
+          the energy × valence plane, with quadrant labels for orientation.
         </p>
       </div>
     </section>
   );
 }
 
-// Backwards-compatible export so existing imports keep working.
+// Backwards-compatible exports so older imports keep working.
 export const MoodClustersPlaceholder = MoodClustersEmpty;
+export { MoodCloudChart as MoodClustersChart };
+export { TrackQuadrantBreakdown as MoodQuadrantBreakdown };

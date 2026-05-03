@@ -26,7 +26,7 @@ export function MotifRail({ tab }: MotifRailProps) {
   const CHIP: Record<TabId, { bg: string; border: string; text: string }> = {
     overview: { bg: '#f0e8d6', border: '#14120e', text: '#3a342a' }, // washi + sumi
     history:  { bg: '#e8ecec', border: '#0b2545', text: '#0b2545' }, // ice + Hokusai navy
-    patterns: { bg: '#c8456c', border: '#7a2a44', text: '#fbe8e7' }, // crimson + pale rose
+    patterns: { bg: '#fde7ec', border: '#c8456c', text: '#7a2a44' }, // pastel pink + crimson
     tracks:   { bg: '#f5e6d3', border: '#b8341f', text: '#7a2418' }, // kraft + vermilion
     artists:  { bg: '#1a1612', border: '#d4a017', text: '#e8c060' }, // lacquer + gold
   };

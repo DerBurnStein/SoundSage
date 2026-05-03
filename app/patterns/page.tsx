@@ -10,6 +10,7 @@ import {
   getWeekdayWeekend,
   getTimeOfDay,
   getSeasonalGenres,
+  getMoodPoints,
 } from '@/lib/page-data';
 
 import { TabIndex, type TabIndexItem } from '@/components/TabIndex';
@@ -22,7 +23,9 @@ import {
   WeekdayWeekendChart,
   TimeOfDayChart,
   SeasonalGenreGrid,
-  MoodClustersPlaceholder,
+  MoodCloudChart,
+  MoodProfile,
+  TrackQuadrantBreakdown,
 } from '@/components/charts/PatternViews';
 import {
   SignInPrompt,
@@ -142,14 +145,22 @@ async function renderPatternView(userId: string, tz: string, view: PatternView) 
       );
     }
     case 'mood-clusters': {
+      // Pull the user's top tracks (all-time) and score each on the energy
+      // × valence plane via lib/mood.ts. Track-level gives a denser,
+      // less-clustered scatter than genre-level, and the breakdown panel
+      // can list real songs instead of broad genres.
+      const points = await getMoodPoints(userId, 300);
       return (
         <>
           <ViewHeader
             backHref="/patterns"
             kicker="View · Mood clusters"
             title="Mood clusters"
+            subtitle="Where each track falls on the energy × valence plane."
           />
-          <MoodClustersPlaceholder />
+          <MoodProfile             points={points} />
+          <MoodCloudChart          points={points} />
+          <TrackQuadrantBreakdown  points={points} />
         </>
       );
     }
