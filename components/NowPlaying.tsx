@@ -92,6 +92,68 @@ export function NowPlaying() {
     if (data?.playing) lastActiveAtRef.current = Date.now();
   }, [data?.playing]);
 
+  // Transition detection: when the active track changes (A → B, or A → idle),
+  // promote A as a finished play immediately. Spotify's /recently-played API
+  // trails reality by 30s-2min; this closes that gap and matches stats.fm-
+  // grade currency. Quota-free — we're piggy-backing on the existing 5s poll.
+  //
+  // We track the LAST observed playing track in a ref. We need both the track
+  // identity (to detect changes) and the most recent observed progressMs (so
+  // we can pass msPlayed to the server, mirroring Spotify's >=30s threshold).
+  const lastSeenRef = useRef<{
+    track: NonNullable<NowPlayingResponse['track']>;
+    lastProgressMs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const prev = lastSeenRef.current;
+    const current = data?.playing && data.track ? data.track : null;
+
+    // Update memo first — the rest of this effect only fires the promote
+    // request, never short-circuits the memo update.
+    if (current) {
+      lastSeenRef.current = {
+        track: current,
+        lastProgressMs: data!.progressMs ?? prev?.lastProgressMs ?? 0,
+      };
+    } else {
+      lastSeenRef.current = null;
+    }
+
+    // No transition to act on if we hadn't seen anything previously.
+    if (!prev) return;
+
+    const prevId = prev.track.id;
+    const currId = current?.id ?? null;
+    if (prevId === currId) return; // same track, nothing to promote
+
+    // Track changed (or stopped). Treat the previous track as finished. We
+    // pass the last-observed progressMs as msPlayed; the server enforces
+    // the >=30s minimum so a brief skip won't be recorded.
+    const body = {
+      track: {
+        id: prev.track.id,
+        name: prev.track.name,
+        artists: prev.track.artists.map((a) => ({ id: a.id, name: a.name })),
+        album: { name: prev.track.album.name, imageUrl: prev.track.album.imageUrl },
+        durationMs: prev.track.durationMs,
+      },
+      msPlayed: prev.lastProgressMs,
+      endedAt: Date.now(),
+    };
+    fetch('/api/listening/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(() => {
+        // The Recently-played list now has a new entry — refetch so the
+        // dashboard reflects it without waiting for the next 15-min sync.
+        queryClient.invalidateQueries({ queryKey: ['recent-history'] });
+      })
+      .catch(() => undefined); // network blips: next transition will retry
+  }, [data?.playing, data?.track, data?.progressMs, queryClient]);
+
   // On window focus: bump the activity timestamp and force an immediate
   // refetch. Together this guarantees that returning to the tab always
   // shows fresh state and resumes FAST polling for at least IDLE_THRESHOLD,

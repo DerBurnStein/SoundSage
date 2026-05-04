@@ -3,6 +3,7 @@ import { ensureFreshToken } from './spotify-tokens';
 import { spotifyGet } from './spotify';
 import { redis } from './redis';
 import { invalidatePrefix } from './cache';
+import { syncStart, syncStage, activity } from './sync-progress';
 import logger from './logger';
 
 // ─── Spotify response shapes (richer than the shared type — includes album) ───
@@ -40,24 +41,36 @@ export interface SyncResult {
 
 // ─── Main sync function ───────────────────────────────────────────────────────
 
-export async function incrementalSync(userId: string): Promise<SyncResult> {
+export async function incrementalSync(
+  userId: string,
+  allowRetry = true,
+): Promise<SyncResult> {
+  await syncStart(userId);
+
   const account = await db.spotifyAccount.findUnique({ where: { userId } });
 
   if (!account) {
     logger.info({ userId }, 'Sync skipped: no Spotify account');
+    await syncStage(userId, 'error', 'no Spotify account linked');
     return { inserted: 0, cursor: null, skipped: true };
   }
 
   if (account.needsReconnect) {
     logger.info({ userId }, 'Sync skipped: account needs reconnect');
+    await syncStage(userId, 'error', 'account needs reconnect');
     return { inserted: 0, cursor: account.cursor, skipped: true };
   }
 
   // Ensure we have a valid access token (refreshes if needed)
+  await syncStage(userId, 'token', 'Checking access token');
+  await activity(userId, '↻', 'ensuring fresh access token');
   let accessToken: string;
   try {
     accessToken = await ensureFreshToken(userId);
+    await activity(userId, '✓', 'access token ready');
   } catch (err) {
+    await activity(userId, '⚠', `token refresh failed: ${String(err).slice(0, 80)}`);
+    await syncStage(userId, 'error', 'token refresh failed');
     await bumpFailureCount(userId, account.failureCount);
     throw err;
   }
@@ -68,6 +81,8 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
     qs.set('after', String(account.cursor.getTime()));
   }
 
+  await syncStage(userId, 'fetch', 'Fetching recent plays from Spotify');
+  await activity(userId, '→', `GET /v1/me/player/recently-played?${qs.toString()}`);
   let data: RecentlyPlayedResponse;
   try {
     data = await spotifyGet<RecentlyPlayedResponse>(
@@ -75,18 +90,59 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
       accessToken
     );
   } catch (err) {
+    await activity(userId, '⚠', `Spotify fetch failed: ${String(err).slice(0, 80)}`);
+    await syncStage(userId, 'error', 'Spotify API error');
     await bumpFailureCount(userId, account.failureCount);
     throw err;
   }
 
   const items = data.items ?? [];
+  await activity(userId, '✓', `Spotify returned ${items.length} item${items.length === 1 ? '' : 's'}`);
 
-  // Nothing new — just stamp lastSyncAt and return
+  // Nothing new — just stamp lastSyncAt and return.
+  //
+  // BUT: Spotify's /recently-played endpoint has an indexing delay of
+  // 30s-2min. If we just synced and got 0 items but the user is actively
+  // listening (or just was), the play probably hasn't propagated to the
+  // API yet. Schedule one delayed retry to catch the lagging play before
+  // the next 15-min cron tick. Without this, manual "Run sync now" right
+  // after playing a track frequently appears to do nothing.
   if (items.length === 0) {
     await db.spotifyAccount.update({
       where: { userId },
       data: { lastSyncAt: new Date(), failureCount: 0 },
     });
+
+    // Detect "user is actively playing now" via /me/player/currently-playing.
+    // 204 / null = idle. Anything with a track = active. Failures here are
+    // non-fatal — if we can't tell, skip the retry rather than retry blindly.
+    let isActive = false;
+    try {
+      const playing = await spotifyGet<{ is_playing?: boolean; item?: unknown } | null>(
+        '/me/player/currently-playing',
+        accessToken
+      );
+      isActive = !!(playing && playing.is_playing && playing.item);
+    } catch {
+      isActive = false;
+    }
+
+    if (isActive && allowRetry) {
+      await activity(userId, '⚠', 'Spotify hasn\'t indexed your latest plays yet');
+      await activity(userId, '↻', 'scheduling retry in 75s (indexing delay)');
+      // Fire-and-forget delayed retry. The retry passes allowRetry=false
+      // so it can't recurse — one retry is enough; if it still fails the
+      // next 15-min cron tick handles it.
+      setTimeout(() => {
+        incrementalSync(userId, false).catch((err) =>
+          logger.warn({ userId, err: String(err) }, 'Delayed retry sync failed')
+        );
+      }, 75_000);
+      await syncStage(userId, 'done', 'Up to date — retry queued for indexing delay');
+    } else {
+      await activity(userId, '✓', 'no new plays since last sync');
+      await syncStage(userId, 'done', 'Up to date — no new plays');
+    }
     return { inserted: 0, cursor: account.cursor, skipped: false };
   }
 
@@ -96,13 +152,67 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
   // accurate for the majority of plays, low-impact when wrong since most
   // queries already aggregate by play count not millisecond precision.
   // Extended-history imports (Phase 5) overwrite this with actual ms_played.
-  const events = items.map((item) => ({
+  const rawEvents = items.map((item) => ({
     userId,
     trackId: item.track.id,
     playedAt: new Date(item.played_at),
     msPlayed: item.track.duration_ms,
     source: 'recently_played' as const,
   }));
+
+  // Fuzzy dedupe vs. real-time promotions written by /api/listening/promote.
+  // Promote stamps `playedAt` at the moment the client saw the track end;
+  // Spotify's `played_at` is set when their indexer eventually picks the
+  // play up — typically within 90s of the real end. The composite unique
+  // index is exact-match, so without this filter we'd insert both copies
+  // of the same play. Window matches the promote endpoint.
+  const PROMOTE_DEDUPE_WINDOW_MS = 90_000;
+  const candidateRange = rawEvents.reduce<{ min: Date; max: Date } | null>(
+    (acc, e) => {
+      if (!acc) return { min: e.playedAt, max: e.playedAt };
+      return {
+        min: e.playedAt < acc.min ? e.playedAt : acc.min,
+        max: e.playedAt > acc.max ? e.playedAt : acc.max,
+      };
+    },
+    null
+  );
+  const recentPromotions = candidateRange
+    ? await db.listeningEvent.findMany({
+        where: {
+          userId,
+          source: 'currently_playing',
+          playedAt: {
+            gte: new Date(candidateRange.min.getTime() - PROMOTE_DEDUPE_WINDOW_MS),
+            lte: new Date(candidateRange.max.getTime() + PROMOTE_DEDUPE_WINDOW_MS),
+          },
+        },
+        select: { trackId: true, playedAt: true },
+      })
+    : [];
+  const events = rawEvents.filter((e) => {
+    const collision = recentPromotions.find(
+      (p) =>
+        p.trackId === e.trackId &&
+        Math.abs(p.playedAt.getTime() - e.playedAt.getTime()) <= PROMOTE_DEDUPE_WINDOW_MS
+    );
+    return !collision;
+  });
+  const fuzzySkipped = rawEvents.length - events.length;
+  if (fuzzySkipped > 0) {
+    await activity(userId, '↻', `skipped ${fuzzySkipped} already-promoted play${fuzzySkipped === 1 ? '' : 's'}`);
+  }
+
+  // If everything was already promoted, just advance lastSyncAt and bail —
+  // there's nothing for the transaction to insert.
+  if (events.length === 0) {
+    await db.spotifyAccount.update({
+      where: { userId },
+      data: { lastSyncAt: new Date(), failureCount: 0 },
+    });
+    await syncStage(userId, 'done', 'Up to date — all plays already captured live');
+    return { inserted: 0, cursor: account.cursor, skipped: false };
+  }
 
   // New high-water mark = latest playedAt in this batch
   const newCursor = events.reduce(
@@ -111,6 +221,8 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
   );
 
   // Atomically insert events + advance cursor
+  await syncStage(userId, 'persist', `Inserting ${events.length} events`);
+  await activity(userId, '→', `INSERT ${events.length} listening events (transaction)`);
   let inserted = 0;
   try {
     const result = await db.$transaction(async (tx) => {
@@ -125,7 +237,10 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
       return createResult;
     });
     inserted = result.count;
+    await activity(userId, '✓', `inserted ${inserted} new event${inserted === 1 ? '' : 's'} (${events.length - inserted} duplicate${events.length - inserted === 1 ? '' : 's'} skipped)`);
   } catch (err) {
+    await activity(userId, '⚠', `DB insert failed: ${String(err).slice(0, 80)}`);
+    await syncStage(userId, 'error', 'database insert failed');
     await bumpFailureCount(userId, account.failureCount);
     throw err;
   }
@@ -136,9 +251,13 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
   // render as "Unknown" until the next upsert. This was a few hundred
   // ms of "stale" feeling on every sync. Upsert is bounded to ~50 rows
   // so awaiting it costs us very little.
+  await syncStage(userId, 'metadata', 'Updating track + artist metadata');
+  await activity(userId, '→', `upserting metadata for ${items.length} tracks`);
   try {
     await upsertMetadata(items);
+    await activity(userId, '✓', 'track + artist metadata updated');
   } catch (err) {
+    await activity(userId, '⚠', `metadata upsert failed (non-fatal): ${String(err).slice(0, 60)}`);
     logger.warn({ userId, err: String(err) }, 'Metadata upsert failed (non-fatal)');
   }
   // Genre backfill is the long-tail piece — keep it fire-and-forget.
@@ -163,6 +282,12 @@ export async function incrementalSync(userId: string): Promise<SyncResult> {
   // Invalidate cached stats for this user — they now have new events to count.
   // Fire-and-forget; cache misses are cheap and a slow Redis shouldn't block.
   invalidatePrefix(`stats:${userId}:`).catch(() => undefined);
+
+  await syncStage(userId, 'finalize', 'Refreshing caches');
+  await activity(userId, '→', 'invalidating stats cache + scheduling background jobs');
+
+  await syncStage(userId, 'done', `Synced ${inserted} new play${inserted === 1 ? '' : 's'}`);
+  await activity(userId, '✓', `sync complete — ${inserted} new event${inserted === 1 ? '' : 's'}`);
 
   logger.info({ userId, inserted, cursor: newCursor.toISOString() }, 'Sync complete');
   return { inserted, cursor: newCursor, skipped: false };

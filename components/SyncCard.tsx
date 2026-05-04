@@ -1,21 +1,61 @@
 // SoundSage — SyncCard
-// Ingestion pipeline status and manual sync trigger.
-// Fetches /api/sync/status on mount; POST /api/sync/trigger on button click.
+// Ingestion pipeline status + manual sync trigger + live activity stream.
+//
+// Three pieces:
+//   1. Status grid — current oauth/cursor/event-count/last-sync from
+//      /api/sync/status. Refreshed on mount and after each sync.
+//   2. Progress bar — driven by /api/sync/progress (real stage-based
+//      percent, not a fake easing curve). Polls 700ms while a sync is
+//      in flight, drops to 30s once settled.
+//   3. Activity stream — last ~20 lines from /api/sync/activity, shows
+//      what's happening behind the scenes (Spotify calls, DB inserts,
+//      cache invalidations). Visible while a sync is running and for
+//      a short cooldown after.
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Caps, Mono, pad2 } from './primitives';
+import { Caps, Mono } from './primitives';
 import type { SyncStatus } from '../types';
 
-export function SyncCard() {
-  const [status,   setStatus]   = useState<SyncStatus | null>(null);
-  const [running,  setRunning]  = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [log,      setLog]      = useState<{ t: string; m: string }[]>([]);
-  const queryClient = useQueryClient();
+interface SyncProgressBody {
+  progress: {
+    stage:     string;
+    percent:   number;
+    msg:       string;
+    startedAt: number;
+    updatedAt: number;
+    done:      boolean;
+    error?:    string;
+  } | null;
+}
 
+interface ActivityLine {
+  ts:   number;
+  kind: '→' | '✓' | '⚠' | '↻' | '…';
+  msg:  string;
+}
+
+interface ActivityBody {
+  lines: ActivityLine[];
+}
+
+const POLL_FAST_MS = 700;
+const POLL_SLOW_MS = 30_000;
+const ACTIVITY_LINGER_MS = 20_000; // keep showing the feed for 20s after `done`
+
+export function SyncCard() {
+  const [status,    setStatus]    = useState<SyncStatus | null>(null);
+  const [running,   setRunning]   = useState(false);
+  const [percent,   setPercent]   = useState(0);
+  const [stageMsg,  setStageMsg]  = useState<string | null>(null);
+  const [activity,  setActivity]  = useState<ActivityLine[]>([]);
+  const [showActivity, setShowActivity] = useState(false);
+  const queryClient = useQueryClient();
+  const lastDoneAtRef = useRef<number | null>(null);
+
+  // ─── Pipeline status (header grid) ─────────────────────────────────────────
   const fetchStatus = useCallback(async (): Promise<SyncStatus | null> => {
     const r = await fetch('/api/sync/status');
     if (!r.ok) return null;
@@ -26,68 +66,100 @@ export function SyncCard() {
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
+  // ─── Progress + activity polling ───────────────────────────────────────────
+  // Single effect that pulls both endpoints together. Cadence:
+  //   • While a sync is in flight (progress.done === false): every 700ms.
+  //   • Just-finished (within ACTIVITY_LINGER_MS): every 700ms still, so
+  //     the trailing log lines render before we hide the feed.
+  //   • Idle: every 30s — keeps the status grid roughly fresh without
+  //     hammering Redis.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const [pRes, aRes] = await Promise.all([
+          fetch('/api/sync/progress', { cache: 'no-store' }),
+          fetch('/api/sync/activity', { cache: 'no-store' }),
+        ]);
+        if (pRes.ok) {
+          const body = (await pRes.json()) as SyncProgressBody;
+          const p = body.progress;
+          if (p) {
+            setPercent(p.percent);
+            setStageMsg(p.msg);
+            setRunning(!p.done);
+            setShowActivity(true);
+            if (p.done && lastDoneAtRef.current === null) {
+              lastDoneAtRef.current = Date.now();
+              // Refresh status grid + invalidate dependent live queries
+              fetchStatus();
+              queryClient.refetchQueries({ queryKey: ['recent-history'] });
+            }
+            // After ACTIVITY_LINGER_MS in 'done', hide the feed and reset.
+            if (
+              p.done &&
+              lastDoneAtRef.current !== null &&
+              Date.now() - lastDoneAtRef.current > ACTIVITY_LINGER_MS
+            ) {
+              setShowActivity(false);
+              setPercent(0);
+              setStageMsg(null);
+              lastDoneAtRef.current = null;
+            }
+          } else {
+            // No progress key in Redis — sync hasn't run recently.
+            if (running) setRunning(false);
+          }
+        }
+        if (aRes.ok) {
+          const body = (await aRes.json()) as ActivityBody;
+          setActivity(body.lines);
+        }
+      } catch {
+        // Transient — ignore, next tick will try again.
+      }
+      if (cancelled) return;
+      const fast =
+        running ||
+        (lastDoneAtRef.current !== null &&
+          Date.now() - lastDoneAtRef.current < ACTIVITY_LINGER_MS);
+      timer = setTimeout(tick, fast ? POLL_FAST_MS : POLL_SLOW_MS);
+    };
+
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [running, fetchStatus, queryClient]);
+
+  // ─── Manual trigger ────────────────────────────────────────────────────────
   async function triggerSync() {
     if (running) return;
     setRunning(true);
-    setProgress(0);
-
-    // Capture baseline lastSyncAt — we'll watch for it to change as the
-    // canonical "the worker actually finished" signal. Without this we'd
-    // be guessing how long a sync takes and showing "complete" too early.
-    const baseline = (await fetchStatus())?.lastSyncAt ?? null;
-
+    lastDoneAtRef.current = null;
+    setShowActivity(true);
+    setPercent(5);
+    setStageMsg('Sync queued');
+    setActivity([]);
     const r = await fetch('/api/sync/trigger', { method: 'POST' });
-    if (!r.ok) { setRunning(false); return; }
-
-    // Indeterminate progress: ease toward 90%, then snap to 100% only when
-    // a real status poll proves lastSyncAt has advanced. We never sit at
-    // 100 unless the worker truly finished.
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 90_000;
-
-    let progressTickId: ReturnType<typeof setInterval> | null = null;
-    let p = 0;
-    progressTickId = setInterval(() => {
-      // Asymptote at ~88% so the bar feels alive but never falsely lands
-      // on "done". The poller below is the only thing that can complete it.
-      p += (88 - p) * 0.08 + 1.2;
-      if (p > 88) p = 88;
-      setProgress(p);
-    }, 200);
-
-    const finish = (msg: string) => {
-      if (progressTickId) clearInterval(progressTickId);
-      setProgress(100);
-      const now = new Date();
-      const t = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-      setLog(l => [{ t, m: msg }, ...l].slice(0, 6));
-      setTimeout(() => { setRunning(false); setProgress(0); }, 600);
-    };
-
-    const poll = async () => {
-      const fresh = await fetchStatus();
-      if (fresh?.lastSyncAt && fresh.lastSyncAt !== baseline) {
-        // refetchQueries forces an immediate network round-trip on the
-        // matching subscribers — invalidateQueries only marks them stale,
-        // which can race with the live RecentStream's own 30s polling
-        // window and end up with no visible refresh until the next tick.
-        queryClient.refetchQueries({ queryKey: ['recent-history'] });
-        finish('sync complete — cursor advanced');
-        return;
-      }
-      if (Date.now() - startedAt > TIMEOUT_MS) {
-        finish('still working — give it a bit longer');
-        return;
-      }
-      setTimeout(poll, 1500);
-    };
-    setTimeout(poll, 1500);
+    if (!r.ok) {
+      setRunning(false);
+      setStageMsg('Could not queue sync');
+      return;
+    }
+    // The polling loop above takes over from here — it'll see progress
+    // arrive in Redis and drive the bar.
   }
 
+  // ─── Header grid + button ──────────────────────────────────────────────────
   const statusGrid: [string, string, string][] = status ? [
-    ['oauth_tokens',     status.tokens,                   status.tokens === 'fresh' ? 'valid' : 'needs refresh'],
-    ['ingestion_state',  'cursor',                        status.cursor ?? 'none'],
-    ['listening_events', `${status.eventCount.toLocaleString()} rows`, `+${status.eventsToday} today`],
+    ['oauth_tokens',     status.tokens,                                 status.tokens === 'fresh' ? 'valid' : 'needs refresh'],
+    ['ingestion_state',  'cursor',                                      status.cursor ?? 'none'],
+    ['listening_events', `${status.eventCount.toLocaleString()} rows`,  `+${status.eventsToday} today`],
     ['last sync',        status.lastSyncAt ? relTime(status.lastSyncAt) : 'never', 'every 15 min'],
   ] : [];
 
@@ -106,7 +178,7 @@ export function SyncCard() {
           style={{
             border: '1px solid var(--ink)',
             background: running ? 'var(--paper-2)' : 'var(--ink)',
-            color: running ? 'var(--ink)' : 'var(--paper)',
+            color:      running ? 'var(--ink)'     : 'var(--paper)',
             fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 500,
             letterSpacing: '0.04em', padding: '8px 16px',
             cursor: running ? 'wait' : 'pointer',
@@ -118,7 +190,7 @@ export function SyncCard() {
             background: running ? 'var(--ember)' : 'var(--paper)',
             animation: running ? 'pulse 1s ease-in-out infinite' : 'none',
           }} />
-          {running ? 'Syncing…' : 'Run sync now'}
+          {running ? `Syncing… ${Math.round(percent)}%` : 'Run sync now'}
         </button>
       </div>
 
@@ -137,24 +209,80 @@ export function SyncCard() {
         </div>
       )}
 
-      {/* Progress strip */}
-      <div style={{ height: 4, background: 'var(--paper-3)', position: 'relative', marginBottom: 14 }}>
-        <div style={{ height: '100%', width: `${progress}%`, background: 'var(--ember)', transition: 'width .2s ease-out' }} />
+      {/* Progress strip — driven by real stage percent from Redis */}
+      <div style={{ height: 4, background: 'var(--paper-3)', position: 'relative', marginBottom: stageMsg ? 6 : 14 }}>
+        <div style={{
+          height: '100%',
+          width: `${percent}%`,
+          background: 'var(--ember)',
+          transition: 'width 250ms ease-out',
+        }} />
       </div>
+      {stageMsg && (
+        <Mono style={{
+          display: 'block',
+          fontSize: 10, color: 'var(--muted)', letterSpacing: '0.04em',
+          marginBottom: 14,
+        }}>
+          {stageMsg}
+        </Mono>
+      )}
 
-      {/* Log */}
-      {log.length > 0 && (
-        <div style={{ background: 'var(--paper-2)', border: '1px solid var(--rule)', padding: '10px 14px' }}>
-          {log.map((l, i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, fontFamily: 'var(--font-mono)', fontSize: 11, color: i === 0 ? 'var(--ink)' : 'var(--muted)', padding: '3px 0', opacity: Math.max(0.45, 1 - i * 0.12) }}>
-              <span style={{ color: 'var(--dim)' }}>{l.t}</span>
-              <span>{l.m}</span>
+      {/* Activity stream — what's happening behind the scenes right now.
+          Visible during + briefly after a sync; collapses once idle so
+          the static grid above doesn't get crowded by stale logs. */}
+      {showActivity && activity.length > 0 && (
+        <div style={{
+          background: 'var(--paper-2)',
+          border: '1px solid var(--rule)',
+          padding: '10px 14px',
+          maxHeight: 220,
+          overflowY: 'auto',
+        }}>
+          <Mono style={{
+            display: 'block',
+            fontSize: 9, color: 'var(--dim)',
+            letterSpacing: '0.1em',
+            marginBottom: 6,
+          }}>
+            ACTIVITY
+          </Mono>
+          {activity.map((l, i) => (
+            <div
+              key={l.ts + ':' + i}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '60px 14px 1fr',
+                gap: 10,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                color: i === 0 ? 'var(--ink)' : 'var(--muted)',
+                padding: '2px 0',
+                opacity: Math.max(0.5, 1 - i * 0.04),
+              }}
+            >
+              <span style={{ color: 'var(--dim)' }}>
+                {new Date(l.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+              <span style={{ color: kindColor(l.kind), fontWeight: 600 }}>{l.kind}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.msg}</span>
             </div>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+function kindColor(kind: ActivityLine['kind']): string {
+  switch (kind) {
+    case '→': return 'var(--seal)';
+    case '✓': return 'var(--moss)';
+    case '⚠': return 'var(--ember)';
+    case '↻': return 'var(--gold)';
+    case '…':
+    default:  return 'var(--dim)';
+  }
 }
 
 function relTime(iso: string): string {

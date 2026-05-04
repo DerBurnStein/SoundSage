@@ -15,6 +15,7 @@ import { Mono, pad2 } from './primitives';
 import { ConnectionPill } from './ConnectionPill';
 import { NowPlaying } from './NowPlaying';
 import { SettingsButton } from './SettingsButton';
+import { OnboardingModal } from './OnboardingModal';
 import type { TabId, TimeRange } from '../types';
 
 // ─────────────────────────────────────────────────────
@@ -137,6 +138,11 @@ export function Masthead({ today }: MastheadProps) {
           <SettingsButton />
         </div>
       </div>
+
+      {/* First-login data-source picker — auto-opens when the user has Spotify
+          connected but hasn't yet chosen ESH / Last.FM / Synthetic. Also
+          re-openable from the Settings popover. */}
+      <OnboardingModal />
 
       {/* Tab nav + time-range picker */}
       <div className="masthead-nav-row" style={{

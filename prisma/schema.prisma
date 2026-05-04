@@ -24,10 +24,19 @@ model User {
   timezone      String    @default("UTC")
   createdAt     DateTime  @default(now())
 
-  accounts Account[]
-  sessions Session[]
-  spotify  SpotifyAccount?
-  events   ListeningEvent[]
+  // First-login data-source picker. NULL until the user dismisses or completes
+  // the onboarding modal. `onboardingChoice` records which path they took
+  // ("esh" | "lastfm" | "synthetic" | "skip") so we can surface the right
+  // follow-up CTA in Settings ("Upload your ESH ZIP when it arrives").
+  onboardingCompletedAt DateTime?
+  onboardingChoice      String?
+
+  accounts        Account[]
+  sessions        Session[]
+  spotify         SpotifyAccount?
+  events          ListeningEvent[]
+  topTrackSnaps   TopTrackSnapshot[]
+  topArtistSnaps  TopArtistSnapshot[]
 
   @@map("users")
 }
@@ -109,6 +118,8 @@ model Track {
   durationMs  Int?
   updatedAt   DateTime @updatedAt
 
+  topSnapshots TopTrackSnapshot[]
+
   @@map("tracks")
 }
 
@@ -122,8 +133,57 @@ model Artist {
   genresSynced Boolean  @default(false)
   updatedAt    DateTime @updatedAt
 
+  topSnapshots TopArtistSnapshot[]
+
   @@index([genresSynced])
   @@map("artists")
+}
+
+// ─── Top-items snapshots (Spotify-computed aggregates) ───────────────────────
+//
+// Spotify's /v1/me/top/{tracks,artists}?time_range={short,medium,long}_term
+// endpoints return server-computed top-50 lists across rolling 4-week, 6-month,
+// and ~12-month windows. These snapshots populate Tracks/Artists/Patterns tabs
+// instantly on first connect — without them, a brand-new user sees empty
+// charts until raw `recently_played` events accumulate over weeks.
+//
+// Refreshed at connect time and on a periodic schedule (weekly is plenty —
+// rankings shift slowly). Dashboard queries read from these tables when the
+// user has too few raw events to compute their own ranks.
+
+model TopTrackSnapshot {
+  id         BigInt   @id @default(autoincrement())
+  userId     String
+  // 'short_term' | 'medium_term' | 'long_term' — matches Spotify's API param.
+  range      String
+  rank       Int      // 1..50, lower = more played
+  trackId    String   // FK to Track.id
+  capturedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id])
+
+  // One row per (user, range, rank). A new bootstrap deletes the prior set
+  // for that (user, range) before inserting the fresh top-50.
+  @@unique([userId, range, rank])
+  @@index([userId, range])
+  @@map("top_track_snapshots")
+}
+
+model TopArtistSnapshot {
+  id         BigInt   @id @default(autoincrement())
+  userId     String
+  range      String   // same vocabulary as TopTrackSnapshot.range
+  rank       Int      // 1..50
+  artistId   String   // FK to Artist.id
+  capturedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id])
+
+  @@unique([userId, range, rank])
+  @@index([userId, range])
+  @@map("top_artist_snapshots")
 }
 
 // ─── Listening events (core data table) ──────────────────────────────────────

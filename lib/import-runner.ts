@@ -76,6 +76,17 @@ export async function runImport(
 
   let inserted = 0;
 
+  // Real history supersedes synthetic data. The onboarding flow tells the
+  // user this explicitly ("uploading your real history will replace the
+  // estimated values"), so we delete first, then insert. Failure here is
+  // non-fatal — the import should still proceed even if the cleanup hits
+  // a transient DB error.
+  await db.listeningEvent
+    .deleteMany({ where: { userId, source: 'synthetic' } })
+    .catch((err) =>
+      logger.warn({ userId, err: String(err) }, 'import: synthetic cleanup failed')
+    );
+
   try {
     const finalStats = await parseSpotifyHistoryZip(zipBuffer, {
       batchSize: 1000,

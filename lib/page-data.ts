@@ -435,9 +435,91 @@ export async function getTopTracks(
           lastPlayedAt: r.last_played_at.toISOString(),
         };
       });
-      return { tracks: top, range };
+
+      // Bootstrap fallback. For ranges that exceed our event-accumulation
+      // horizon (24h-only via recently-played), the event-derived result
+      // is structurally incomplete — we simply don't have any events from
+      // 4+ weeks ago because the user hadn't connected yet. Spotify's
+      // /v1/me/top/tracks snapshot captured at connect time IS authoritative
+      // for those ranges, so we prefer it over the few stray events we do
+      // happen to have. For 24h/7d ranges the events-as-primary logic is
+      // correct (those plays are well-covered by recently-played).
+      const longRange = range === '4w' || range === '6m' || range === '1y' || range === 'all';
+      if (longRange) {
+        const fromSnap = await topTracksFromSnapshot(userId, range, limit, new Set());
+        if (fromSnap.length > 0) {
+          // Merge: snapshot first (rank-ordered), then any event tracks
+          // that aren't already in the snapshot list.
+          const snapIds = new Set(fromSnap.map((t) => t.id));
+          const extras = top.filter((t) => !snapIds.has(t.id));
+          return { tracks: [...fromSnap, ...extras].slice(0, limit), range };
+        }
+      }
+
+      // Short-range path: events are the source of truth, snapshot just
+      // tops up the tail if events came up short of `limit`.
+      if (top.length < limit) {
+        const fallback = await topTracksFromSnapshot(userId, range, limit - top.length, new Set(top.map((t) => t.id)));
+        top.push(...fallback);
+      }
+      return { tracks: top.slice(0, limit), range };
     }
   );
+}
+
+/**
+ * Read top-tracks from the snapshot we captured during the Spotify connect
+ * bootstrap. Used to populate the dashboard's Tracks tab on first login
+ * before raw `recently_played` events have accumulated.
+ *
+ * `excludeIds` skips tracks already present in the event-derived list so
+ * we don't double-count when both sources contain the same track.
+ */
+async function topTracksFromSnapshot(
+  userId: string,
+  uiRange: TimeRange,
+  limit: number,
+  excludeIds: Set<string>
+): Promise<TopTrack[]> {
+  const { snapshotRangeFor } = await import('./spotify-bootstrap');
+  const range = snapshotRangeFor(uiRange);
+  const snaps = await db.topTrackSnapshot.findMany({
+    where: { userId, range },
+    orderBy: { rank: 'asc' },
+    take: limit + excludeIds.size,
+    include: {
+      track: {
+        select: {
+          id: true, name: true, artistNames: true, artistIds: true,
+          albumName: true, albumId: true, imageUrl: true, durationMs: true,
+        },
+      },
+    },
+  });
+  const out: TopTrack[] = [];
+  for (const s of snaps) {
+    if (excludeIds.has(s.trackId)) continue;
+    const t = s.track;
+    out.push({
+      id: t.id,
+      name: t.name,
+      artists: t.artistNames.map((name, i) => ({ id: t.artistIds[i] ?? '', name })),
+      album: {
+        id: t.albumId ?? '',
+        name: t.albumName ?? '',
+        imageUrl: t.imageUrl ?? null,
+      },
+      // We don't have raw play counts here — use the snapshot rank inverted
+      // so the dashboard's relative bar widths read sensibly (rank-1 widest).
+      // This signals "Spotify says this is your most-played" without
+      // claiming a specific count.
+      plays: Math.max(1, 51 - s.rank),
+      totalMs: (t.durationMs ?? 0) * Math.max(1, 51 - s.rank),
+      lastPlayedAt: s.capturedAt.toISOString(),
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // ─── Top artists ──────────────────────────────────────────────────────────────
@@ -497,9 +579,67 @@ export async function getTopArtists(
           share: totalPlays > 0 ? r.plays / totalPlays : 0,
         };
       });
-      return { artists, range };
+
+      // Same dual-mode pattern as getTopTracks: long ranges prefer the
+      // snapshot (Spotify-computed, authoritative for 4w+); short ranges
+      // prefer events (recently-played covers them well).
+      const longRange = range === '4w' || range === '6m' || range === '1y' || range === 'all';
+      if (longRange) {
+        const fromSnap = await topArtistsFromSnapshot(userId, range, limit, new Set());
+        if (fromSnap.length > 0) {
+          const snapIds = new Set(fromSnap.map((a) => a.id));
+          const extras = artists.filter((a) => !snapIds.has(a.id));
+          return { artists: [...fromSnap, ...extras].slice(0, limit), range };
+        }
+      }
+
+      if (artists.length < limit) {
+        const fallback = await topArtistsFromSnapshot(userId, range, limit - artists.length, new Set(artists.map((a) => a.id)));
+        artists.push(...fallback);
+      }
+      return { artists: artists.slice(0, limit), range };
     }
   );
+}
+
+async function topArtistsFromSnapshot(
+  userId: string,
+  uiRange: TimeRange,
+  limit: number,
+  excludeIds: Set<string>
+): Promise<TopArtist[]> {
+  const { snapshotRangeFor } = await import('./spotify-bootstrap');
+  const range = snapshotRangeFor(uiRange);
+  const snaps = await db.topArtistSnapshot.findMany({
+    where: { userId, range },
+    orderBy: { rank: 'asc' },
+    take: limit + excludeIds.size,
+    include: {
+      artist: {
+        select: { id: true, name: true, imageUrl: true, genres: true },
+      },
+    },
+  });
+  const out: TopArtist[] = [];
+  // Total weight across all snapshot entries — used to compute a stable
+  // `share` value in the same scale as the event-derived share field.
+  const totalWeight = snaps.reduce((s, x) => s + Math.max(1, 51 - x.rank), 0) || 1;
+  for (const s of snaps) {
+    if (excludeIds.has(s.artistId)) continue;
+    const a = s.artist;
+    const weight = Math.max(1, 51 - s.rank);
+    out.push({
+      id: a.id,
+      name: a.name,
+      imageUrl: a.imageUrl ?? null,
+      genres: a.genres ?? [],
+      plays: weight,
+      uniqueTracks: 0,
+      share: weight / totalWeight,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // ─── History counts (today / yesterday / this week / last week) ──────────────

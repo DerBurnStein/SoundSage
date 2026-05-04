@@ -108,14 +108,6 @@ export function SettingsButton() {
     setSyncDone(false);
     setSyncProgress(0);
 
-    // Capture the user's current `lastSyncAt` so we can detect a NEWER
-    // value once the worker finishes — that's our completion signal.
-    let baseline: string | null = null;
-    try {
-      const s = await fetch('/api/sync/status');
-      if (s.ok) baseline = ((await s.json()) as { lastSyncAt: string | null }).lastSyncAt;
-    } catch { /* baseline stays null — first poll that returns a value will close the loop */ }
-
     setSyncing(true);
     try {
       const r = await fetch('/api/sync/trigger', { method: 'POST' });
@@ -137,56 +129,54 @@ export function SettingsButton() {
       return;
     }
 
-    // Indeterminate ease toward 88% so the bar feels alive but never
-    // falsely lands on "done". The poller below is the only thing that
-    // can complete it.
-    let p = 0;
-    const progressTick = setInterval(() => {
-      p += (88 - p) * 0.08 + 1.2;
-      if (p > 88) p = 88;
-      setSyncProgress(p);
-    }, 200);
+    // Poll /api/sync/progress for the real stage-driven percent the
+    // worker pushes to Redis. Same source the SyncCard reads, so both
+    // bars advance in lockstep with the actual sync stages.
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 120_000;
 
-    const finish = (msg: string, done: boolean) => {
-      clearInterval(progressTick);
-      setSyncProgress(done ? 100 : 0);
+    const finish = (msg: string, done: boolean, finalPct: number) => {
+      setSyncProgress(finalPct);
       setSyncing(false);
       setSyncMsg(msg);
       setSyncDone(done);
       if (done) {
         // Drop the 100% bar back to 0 once the user has had a moment
-        // to register that the sync finished.
-        setTimeout(() => setSyncProgress(0), 1200);
+        // to register completion.
+        setTimeout(() => setSyncProgress(0), 1500);
       }
     };
 
-    // Poll for completion. Tries every 2s; gives up after ~90s with a
-    // gentle "still working" message rather than spinning forever.
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 90_000;
     const tick = async () => {
       try {
-        const s = await fetch('/api/sync/status');
-        if (s.ok) {
-          const body = (await s.json()) as { lastSyncAt: string | null };
-          if (body.lastSyncAt && body.lastSyncAt !== baseline) {
-            // refetchQueries forces an immediate network round-trip on the
-            // matching subscribers; invalidateQueries only flags stale,
-            // which can race with the live RecentStream's polling window.
-            queryClient.refetchQueries({ queryKey: ['recent-history'] });
-            finish('Synced just now.', true);
-            return;
+        const r = await fetch('/api/sync/progress', { cache: 'no-store' });
+        if (r.ok) {
+          const body = (await r.json()) as {
+            progress: { stage: string; percent: number; msg: string; done: boolean; error?: string } | null;
+          };
+          const p = body.progress;
+          if (p) {
+            setSyncProgress(p.percent);
+            if (p.done) {
+              if (p.stage === 'error') {
+                finish(p.error ?? 'Sync failed.', false, 0);
+              } else {
+                queryClient.refetchQueries({ queryKey: ['recent-history'] });
+                finish('Synced just now.', true, 100);
+              }
+              return;
+            }
           }
         }
       } catch { /* transient — keep polling */ }
 
       if (Date.now() - startedAt > TIMEOUT_MS) {
-        finish('Still working — give it a bit longer.', false);
+        finish('Still working — give it a bit longer.', false, 0);
         return;
       }
-      setTimeout(tick, 2_000);
+      setTimeout(tick, 700);
     };
-    setTimeout(tick, 2_000);
+    setTimeout(tick, 500);
   }
 
   async function handleDeleteAccount() {
@@ -394,6 +384,21 @@ export function SettingsButton() {
                 )}
 
                 <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+                  {conn?.connected && (
+                    <ActionButton
+                      onClick={() => {
+                        setOpen(false);
+                        // Defer so the popover-close animation doesn't fight
+                        // the modal-open paint.
+                        setTimeout(() => {
+                          window.dispatchEvent(new Event('soundsage:open-onboarding'));
+                        }, 50);
+                      }}
+                    >
+                      Import listening history
+                    </ActionButton>
+                  )}
+
                   {conn?.connected && discStage === 'idle' && (
                     <ActionButton onClick={() => setDiscStage('confirm')}>
                       Disconnect Spotify

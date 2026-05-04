@@ -86,6 +86,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   logger.info({ userId: pkce.userId, spotifyUserId: spotifyUser.id }, 'Spotify connected');
 
+  // Fire-and-forget: prime the dashboard with Spotify-side aggregates so the
+  // user sees populated Tracks/Artists/Patterns tabs immediately instead of
+  // waiting weeks for raw events to accumulate. Bootstrap takes ~2-4s for
+  // 6 endpoint calls — well under the time the user spends getting back to
+  // the dashboard, so the snapshot is usually written before first render.
+  // Failures are logged but don't block the connect flow.
+  import('@/lib/spotify-bootstrap')
+    .then(({ bootstrapTopItems }) => bootstrapTopItems(pkce.userId))
+    .catch((err) =>
+      logger.warn({ userId: pkce.userId, err: String(err) }, 'Top-items bootstrap failed (non-fatal)')
+    );
+
   // Redirect back to the app origin (NEXTAUTH_URL = localhost in dev, real domain in prod).
   // We can't redirect to req.url's origin here because Spotify sent us to 127.0.0.1
   // but the user's session lives on localhost (or the production domain).
