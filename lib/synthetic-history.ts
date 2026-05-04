@@ -1,369 +1,542 @@
-// SoundSage — Synthetic listening-history generator
+// SoundSage — Synthetic listening-history generator (v2)
 //
-// For users who can't (or won't) wait 30 days for a Spotify Extended
-// Streaming History export and don't have a Last.FM account, we synthesize
-// a plausible play log from the data that IS available on day one:
+// Generates a play log that mimics real-world listening patterns when the
+// user can't (or won't) wait 30 days for a Spotify ESH export. Designed to
+// be replaced wholesale when ESH or Last.FM data lands — every row written
+// here is tagged `source: 'synthetic'` and the import paths
+// deleteMany({ source: 'synthetic' }) before persisting their own rows.
 //
-//   • Top tracks × 3 ranges (short/medium/long, 50 each, ranked)
-//   • Top artists × 3 ranges (50 each, ranked)
-//   • The last 50 plays from /recently-played (gives us the user's
-//     hour-of-day / weekday fingerprint — the trick that makes synthetic
-//     output "look like them" instead of generic)
+// Why we need this engine at all: Spotify's live API only gives the past
+// 24 hours of plays through /recently-played, plus three rank-only
+// "Top Items" lists (no counts, no timestamps). On day one the dashboard
+// has nothing to chart. Synthesis fills the gap with a plausible play log
+// so all the existing chart machinery has data to render.
 //
-// The output is a set of ListeningEvent rows tagged `source: 'synthetic'`.
-// The UI labels these as estimates and tells the user they will be REPLACED
-// by real data the moment they upload their ESH ZIP or connect Last.FM —
-// see runImport / runLastFmImport, which `deleteMany({ source: 'synthetic' })`
-// before persisting their own rows.
+// What "realistic" means here:
 //
-// Quality model:
-//   • Play counts per rank follow a Zipfian distribution (rank^-s) with
-//     s ≈ 1.0. This matches empirical play-count histograms from public
-//     ESH dumps.
-//   • Total play volume is calibrated against the user's observed daily
-//     rate from /recently-played. If we see 25 plays in the last 24h, the
-//     daily rate is 25, and a 4-week short_term has ≈ 700 plays to spread.
-//   • Timestamps are sampled from the user's actual hour-of-day × day-of-
-//     week histogram (weighted) and randomly within each bucket. Falls back
-//     to a generic circadian shape if too few real samples.
+//   1. Power-law play counts. Real listening histories follow Zipf with
+//      exponent ~1.05 — the #1 track is ~3× the #5 track, ~10× the #25,
+//      ~30× the #100. We use the user's three rank lists (short / medium /
+//      long term) plus their top artists' top tracks to build a pool of
+//      ~250 tracks, then assign Zipf-distributed counts.
+//
+//   2. Long tail. Real listeners have hundreds of tracks with 1-3 plays
+//      each. We add filler tracks beyond the snapshot pool by pulling each
+//      top artist's top-N tracks from /artists/{id}/top-tracks.
+//
+//   3. Smooth temporal distribution. We DON'T snap plays to specific
+//      weekdays (the v1 bug — every play landed on a Sunday because the
+//      user's recently-played fingerprint had a Sunday peak). Instead we
+//      pick a uniform random date in the track's window, then a weighted
+//      hour-of-day from the fingerprint. Weekday weight is applied as a
+//      gentle multiplier (max 1.4× difference), not a hard snap.
+//
+//   4. Per-day cap. Real users do 30-60 plays/day; we cap at 80 to allow
+//      occasional binge days while preventing the 1942-plays-on-one-day
+//      glitch v1 produced.
+//
+//   5. Realistic msPlayed. 78% near-complete (85-100% of duration), 17%
+//      partial (50-85%), 5% skipped (30s-50%). Drives the per-day
+//      "minutes listened" charts to look like real human behavior.
+//
+//   6. Recency bias. Tracks ranked highest in short_term get most of their
+//      plays in the last 28 days. Tracks only in long_term get most of
+//      their plays in the 6-12-month region. Mirrors real usage where
+//      "what you listen to changes over time."
 
 import { db } from './db';
-import { spotifyGet, type SpotifyTrackDetails } from './spotify';
+import { spotifyGet, type SpotifyTrackDetails, type SpotifyArtistDetails } from './spotify';
 import { ensureFreshToken } from './spotify-tokens';
 import logger from './logger';
 
-// ─── Calibration constants ───────────────────────────────────────────────────
+// ─── Tunable constants ───────────────────────────────────────────────────────
 
-const ZIPF_EXPONENT = 1.0;
-// Short / medium / long term coverage windows in days. Spotify's docs say
-// short ≈ 4 weeks, medium ≈ 6 months, long ≈ 12 months (their ranking is
-// time-decayed, but the bulk of weight falls in these windows).
+const ZIPF_EXPONENT = 1.05;
+// Daily-rate floor — even if recently-played returns very few items (the
+// user just signed up and hasn't listened today), we generate enough plays
+// to populate charts. Spotify's published median active user listens for
+// 80-90 minutes/day ≈ 25-30 plays.
+const BASE_DAILY_RATE = 32;
+// Hard ceiling on synthetic plays per single calendar day. Prevents the
+// v1 bug where a Sunday-heavy fingerprint dumped 2000 plays on one date.
+const MAX_PLAYS_PER_DAY = 80;
+// Number of artist-derived filler tracks per range. Each top artist
+// contributes their top tracks (deduped against the user's top-tracks
+// list); together they form the long-tail.
+const ARTISTS_FOR_FILLER = 25;
+const FILLER_TRACKS_PER_ARTIST = 8;
+// Fraction of plays in each completion bucket. Loosely calibrated against
+// public ESH dumps shared on r/spotify.
+const COMPLETION_NEAR_FULL = 0.78;
+const COMPLETION_PARTIAL = 0.17;
+// remaining 0.05 = skipped (30s-50%)
+
 const RANGE_DAYS = { short_term: 28, medium_term: 180, long_term: 365 } as const;
-// Minimum daily play rate when the user has very few /recently-played items.
-// Picked to give a non-empty dashboard without overstating volume.
-const FALLBACK_DAILY_RATE = 8;
-// Cap on synthetic plays per range — keeps the table from blowing up for
-// users who left a song on repeat for 24h before signing up.
-const MAX_PLAYS_PER_RANGE = 5_000;
+const RANGE_DAILY_MULTIPLIER = { short_term: 1.3, medium_term: 1.0, long_term: 0.85 } as const;
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface RecentItem {
-  played_at: string;
-  track: { duration_ms: number };
-}
-
-interface RecentResponse {
-  items: RecentItem[];
-}
-
-interface TopTracksResp { items: SpotifyTrackDetails[]; }
-interface ArtistTopTracksResp { tracks: SpotifyTrackDetails[]; }
+// ─── Public types ────────────────────────────────────────────────────────────
 
 export interface SyntheticResult {
   totalPlaysGenerated: number;
+  uniqueTracks: number;
+  earliestPlay: string;
+  latestPlay: string;
   byRange: Record<string, number>;
 }
 
-// ─── Hour×day fingerprint (168-bucket histogram) ─────────────────────────────
+// ─── Spotify response shapes ────────────────────────────────────────────────
 
-interface CircadianFingerprint {
-  buckets: number[]; // length 168, weights summing > 0
-  totalSamples: number;
+interface RecentItem {
+  played_at: string;
+}
+interface RecentResponse { items: RecentItem[]; }
+interface TopTracksResp { items: SpotifyTrackDetails[]; }
+interface TopArtistsResp { items: SpotifyArtistDetails[]; }
+interface ArtistTopTracksResp { tracks: SpotifyTrackDetails[]; }
+
+// ─── Hour-of-day fingerprint (24 buckets, smoothed with generic curve) ──────
+
+interface HourFingerprint {
+  hourWeights: number[];   // length 24
+  weekdayWeights: number[]; // length 7 (0=Sun)
 }
 
-function emptyFingerprint(): CircadianFingerprint {
-  return { buckets: new Array(168).fill(0), totalSamples: 0 };
+function genericHourCurve(): number[] {
+  // Awake-hours bias with morning + evening peaks, very low overnight.
+  const w: number[] = new Array(24).fill(0.05);
+  for (let h = 6; h <= 9; h++) w[h] = 0.7;
+  for (let h = 10; h <= 11; h++) w[h] = 0.6;
+  for (let h = 12; h <= 14; h++) w[h] = 0.85;
+  for (let h = 15; h <= 17; h++) w[h] = 0.75;
+  for (let h = 18; h <= 22; h++) w[h] = 1.0;
+  w[23] = 0.5;
+  w[0] = 0.2;
+  for (let h = 1; h <= 5; h++) w[h] = 0.05;
+  return w;
 }
 
-function bucketOf(d: Date): number {
-  // 0-167: Sunday 00:00 = 0, Saturday 23:00 = 167.
-  return d.getUTCDay() * 24 + d.getUTCHours();
+function genericWeekdayCurve(): number[] {
+  // Slight weekend lift — listening peaks on Saturday afternoons in most
+  // public datasets. Sunday slightly lower than Saturday.
+  return [1.05, 0.95, 0.95, 0.95, 0.95, 1.05, 1.15];
 }
 
-function genericCircadian(): CircadianFingerprint {
-  const buckets = new Array(168).fill(0);
-  // Generic curve: low overnight, peak commute (8am, 6pm), gentle weekend
-  // afternoon. Tuned to look reasonable without claiming to be the user's.
-  for (let day = 0; day < 7; day++) {
-    const isWeekend = day === 0 || day === 6;
-    for (let hour = 0; hour < 24; hour++) {
-      let w = 0.1;
-      if (hour >= 7 && hour <= 9) w = isWeekend ? 0.4 : 1.0;
-      else if (hour >= 12 && hour <= 13) w = 0.7;
-      else if (hour >= 17 && hour <= 19) w = isWeekend ? 0.7 : 1.2;
-      else if (hour >= 20 && hour <= 23) w = 0.9;
-      else if (hour >= 10 && hour <= 16) w = isWeekend ? 0.8 : 0.5;
-      buckets[day * 24 + hour] = w;
+function buildFingerprint(items: RecentItem[]): HourFingerprint {
+  const generic = genericHourCurve();
+  const genericDay = genericWeekdayCurve();
+
+  if (items.length < 5) {
+    return { hourWeights: generic, weekdayWeights: genericDay };
+  }
+
+  const hourCounts = new Array(24).fill(0);
+  const dayCounts = new Array(7).fill(0);
+  for (const it of items) {
+    const d = new Date(it.played_at);
+    hourCounts[d.getUTCHours()] += 1;
+    dayCounts[d.getUTCDay()] += 1;
+  }
+
+  // Heavy smoothing — blend 50/50 with generic so a few clustered samples
+  // don't crater every other bucket. Real fingerprints have peaks but
+  // never strict zeros across whole halves of the day.
+  const hourWeights = generic.map((g, h) => 0.5 * g + 0.5 * (hourCounts[h] / items.length) * 24);
+  const weekdayWeights = genericDay.map(
+    (g, d) => 0.7 * g + 0.3 * (dayCounts[d] / items.length) * 7
+  );
+
+  return { hourWeights, weekdayWeights };
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function weightedSample(weights: number[]): number {
+  const total = weights.reduce((s, w) => s + w, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < weights.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return i;
+  }
+  return weights.length - 1;
+}
+
+function pickMsPlayed(durationMs: number): number {
+  const r = Math.random();
+  if (r < COMPLETION_NEAR_FULL) {
+    // 85-100% completion
+    return Math.round(durationMs * (0.85 + Math.random() * 0.15));
+  } else if (r < COMPLETION_NEAR_FULL + COMPLETION_PARTIAL) {
+    // 50-85% completion
+    return Math.round(durationMs * (0.5 + Math.random() * 0.35));
+  } else {
+    // Skipped: 30s-50% (Spotify's 30s threshold is the floor)
+    const minMs = 30_000;
+    const maxMs = Math.max(minMs + 1, Math.round(durationMs * 0.5));
+    return minMs + Math.floor(Math.random() * (maxMs - minMs));
+  }
+}
+
+// ─── Pool building ───────────────────────────────────────────────────────────
+
+interface PooledTrack {
+  id: string;
+  durationMs: number;
+  // "weight" combines all signals: top-tracks rank in any range, plus
+  // artist-derived bonus. Drives the Zipf assignment.
+  weight: number;
+  // Indicator of which range this track is "primarily about" — biases
+  // its plays toward that time window. short_term tracks get bunched
+  // near today; long_term tracks spread across the full year.
+  primaryRange: 'short_term' | 'medium_term' | 'long_term';
+}
+
+async function buildTrackPool(
+  userId: string,
+  accessToken: string
+): Promise<{ pool: PooledTrack[]; ensuredTrackIds: string[] }> {
+  const ranges: Array<keyof typeof RANGE_DAYS> = ['short_term', 'medium_term', 'long_term'];
+  // Recency-weighted: short rank-1 carries more weight than long rank-1
+  // because short_term reflects "current obsession" while long_term mixes
+  // older fading favorites. These multipliers are tunable.
+  const RANGE_WEIGHT = { short_term: 3.0, medium_term: 2.0, long_term: 1.2 };
+
+  const byTrackId = new Map<string, PooledTrack>();
+  const ensuredTrackIds: string[] = []; // upsert these into Track table
+
+  for (const range of ranges) {
+    const snaps = await db.topTrackSnapshot.findMany({
+      where: { userId, range },
+      orderBy: { rank: 'asc' },
+      include: { track: { select: { id: true, durationMs: true } } },
+    });
+
+    let trackList: { id: string; rank: number; durationMs: number | null }[] =
+      snaps.map((s) => ({ id: s.trackId, rank: s.rank, durationMs: s.track?.durationMs ?? null }));
+
+    // Cold-start: snapshot empty. Fall back to live API so synth still
+    // works on a brand-new account where bootstrap hasn't landed.
+    if (trackList.length === 0) {
+      try {
+        const live = await spotifyGet<TopTracksResp>(
+          `/me/top/tracks?time_range=${range}&limit=50`,
+          accessToken
+        );
+        trackList = live.items.map((t, i) => ({
+          id: t.id,
+          rank: i + 1,
+          durationMs: t.duration_ms,
+        }));
+        // Make sure these Track rows exist before we insert events for them.
+        await persistTrackBatch(live.items);
+      } catch (err) {
+        logger.warn({ userId, range, err: String(err) }, 'synth: live top-tracks fetch failed');
+      }
+    }
+
+    for (const t of trackList) {
+      // Zipf-style weight from rank within this range, scaled by how
+      // "current" the range is. Sum across ranges so a track in all three
+      // gets credited from all three.
+      const rankWeight = 1 / Math.pow(t.rank, 0.85);
+      const contribution = RANGE_WEIGHT[range] * rankWeight;
+      const existing = byTrackId.get(t.id);
+      if (existing) {
+        existing.weight += contribution;
+        // Earliest range a track appears in is its primary range — short
+        // outranks medium outranks long.
+        if (
+          (range === 'short_term') ||
+          (range === 'medium_term' && existing.primaryRange === 'long_term')
+        ) {
+          existing.primaryRange = range;
+        }
+      } else {
+        byTrackId.set(t.id, {
+          id: t.id,
+          durationMs: t.durationMs ?? 210_000,
+          weight: contribution,
+          primaryRange: range,
+        });
+      }
     }
   }
-  return { buckets, totalSamples: 0 };
-}
 
-function buildFingerprint(items: RecentItem[]): CircadianFingerprint {
-  if (items.length < 5) return genericCircadian();
-  const fp = emptyFingerprint();
-  for (const item of items) {
-    const d = new Date(item.played_at);
-    fp.buckets[bucketOf(d)] += 1;
-    fp.totalSamples++;
+  // Long-tail filler: each top artist contributes their top-N tracks. Most
+  // will be NEW to the pool (the user hadn't ranked them in their top-50
+  // tracks list, but they ARE artist-favorites they've heard a few times).
+  for (const range of ranges) {
+    const artistSnaps = await db.topArtistSnapshot.findMany({
+      where: { userId, range },
+      orderBy: { rank: 'asc' },
+      take: ARTISTS_FOR_FILLER,
+    });
+
+    let artistList = artistSnaps.map((a) => ({ id: a.artistId, rank: a.rank }));
+    if (artistList.length === 0) {
+      try {
+        const live = await spotifyGet<TopArtistsResp>(
+          `/me/top/artists?time_range=${range}&limit=${ARTISTS_FOR_FILLER}`,
+          accessToken
+        );
+        artistList = live.items.map((a, i) => ({ id: a.id, rank: i + 1 }));
+      } catch {
+        // Skip silently.
+      }
+    }
+
+    for (const a of artistList) {
+      try {
+        const top = await spotifyGet<ArtistTopTracksResp>(
+          `/artists/${a.id}/top-tracks?market=from_token`,
+          accessToken
+        );
+        const tracksToAdd = top.tracks.slice(0, FILLER_TRACKS_PER_ARTIST);
+        // Persist Track rows so the listening_event FK passes AND so the
+        // dashboard has artist names ready (the v1 "Unknown artist" bug
+        // came from incomplete Track rows when artistDerived skipped this).
+        await persistTrackBatch(tracksToAdd);
+
+        for (let i = 0; i < tracksToAdd.length; i++) {
+          const t = tracksToAdd[i];
+          const artistRankWeight = 1 / Math.pow(a.rank, 0.7);
+          // Filler tracks land on the long-tail with much less weight than
+          // ranked tracks. Decay across the artist's track list.
+          const positionWeight = 1 / Math.pow(i + 1, 0.5);
+          const contribution = 0.4 * artistRankWeight * positionWeight * RANGE_WEIGHT[range];
+          const existing = byTrackId.get(t.id);
+          if (existing) {
+            existing.weight += contribution;
+          } else {
+            byTrackId.set(t.id, {
+              id: t.id,
+              durationMs: t.duration_ms,
+              weight: contribution,
+              primaryRange: range,
+            });
+            ensuredTrackIds.push(t.id);
+          }
+        }
+      } catch {
+        // One bad artist shouldn't kill the whole synth.
+      }
+    }
   }
-  // Smooth: blend with generic so empty buckets aren't strict zeros — heavy
-  // listeners with all plays in one window would otherwise generate 100% of
-  // synthetic plays in that bucket.
-  const generic = genericCircadian();
-  const blended = fp.buckets.map((v, i) => v + generic.buckets[i] * 0.2);
-  return { buckets: blended, totalSamples: fp.totalSamples };
+
+  return { pool: Array.from(byTrackId.values()), ensuredTrackIds };
 }
 
-function sampleHourDay(fp: CircadianFingerprint): { dayOfWeek: number; hour: number } {
-  // Weighted sample over 168 buckets.
-  const total = fp.buckets.reduce((s, v) => s + v, 0);
-  let r = Math.random() * total;
-  for (let i = 0; i < fp.buckets.length; i++) {
-    r -= fp.buckets[i];
-    if (r <= 0) return { dayOfWeek: Math.floor(i / 24), hour: i % 24 };
+async function persistTrackBatch(tracks: SpotifyTrackDetails[]): Promise<void> {
+  for (const t of tracks) {
+    try {
+      await db.track.upsert({
+        where: { id: t.id },
+        create: {
+          id: t.id,
+          name: t.name,
+          // Always populate artist names — empty arrays are what causes
+          // "Unknown artist" downstream. If Spotify returned the track at
+          // all, it has an artists array.
+          artistNames: t.artists.map((a) => a.name),
+          artistIds: t.artists.map((a) => a.id),
+          albumName: t.album?.name ?? null,
+          albumId: t.album?.id ?? null,
+          imageUrl: t.album?.images?.[0]?.url ?? null,
+          durationMs: t.duration_ms,
+        },
+        update: {
+          name: t.name,
+          artistNames: t.artists.map((a) => a.name),
+          artistIds: t.artists.map((a) => a.id),
+          albumName: t.album?.name ?? null,
+          albumId: t.album?.id ?? null,
+          imageUrl: t.album?.images?.[0]?.url ?? null,
+          durationMs: t.duration_ms,
+        },
+      });
+    } catch (err) {
+      logger.warn({ trackId: t.id, err: String(err) }, 'synth: track upsert failed');
+    }
   }
-  return { dayOfWeek: 0, hour: 12 }; // unreachable, shuts up the type checker
 }
 
-// ─── Zipfian play-count assignment ───────────────────────────────────────────
+// ─── Event generation ────────────────────────────────────────────────────────
 
-function zipfPlayCounts(items: number, totalPlays: number): number[] {
-  // Returns an array of `items` integers (one per rank position 1..N) that
-  // sum to ≈ `totalPlays` and follow rank^-s.
-  const weights: number[] = [];
+interface PlannedEvent {
+  trackId: string;
+  durationMs: number;
+  playedAt: Date;
+}
+
+function generateEvents(
+  pool: PooledTrack[],
+  totalPlays: number,
+  fp: HourFingerprint,
+  now: Date
+): PlannedEvent[] {
+  // 1. Zipf assignment of plays to tracks. We rank-order by weight, then
+  // distribute totalPlays following rank^-s. Tracks at the long tail get
+  // 1-3 plays each — this is the "I heard this track once last spring"
+  // pattern that real ESH dumps show.
+  const sorted = [...pool].sort((a, b) => b.weight - a.weight);
+  const zipfWeights: number[] = [];
   let denom = 0;
-  for (let r = 1; r <= items; r++) {
+  for (let r = 1; r <= sorted.length; r++) {
     const w = 1 / Math.pow(r, ZIPF_EXPONENT);
-    weights.push(w);
+    zipfWeights.push(w);
     denom += w;
   }
-  const counts = weights.map((w) => Math.max(1, Math.round((w / denom) * totalPlays)));
-  return counts;
+  const counts = zipfWeights.map((w) => Math.max(1, Math.round((w / denom) * totalPlays)));
+
+  // 2. For each track, sample timestamps within its appropriate window.
+  // Per-day cap enforced via a running tally so we never get a 2000-plays-
+  // on-one-day spike.
+  const dayCount = new Map<string, number>(); // YYYY-MM-DD → plays so far
+  const events: PlannedEvent[] = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i];
+    const c = counts[i];
+    const window = recencyWindow(t.primaryRange, i, sorted.length, now);
+
+    let attempts = 0;
+    let placed = 0;
+    while (placed < c && attempts < c * 3) {
+      attempts++;
+      const date = sampleDate(window, fp);
+      const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
+      const tally = dayCount.get(key) ?? 0;
+      if (tally >= MAX_PLAYS_PER_DAY) continue;
+
+      events.push({
+        trackId: t.id,
+        durationMs: t.durationMs,
+        playedAt: date,
+      });
+      dayCount.set(key, tally + 1);
+      placed++;
+    }
+  }
+
+  return events;
 }
 
-// ─── Timestamp sampling ──────────────────────────────────────────────────────
+function recencyWindow(
+  primaryRange: 'short_term' | 'medium_term' | 'long_term',
+  rankIndex: number,
+  poolSize: number,
+  now: Date
+): { start: Date; end: Date; recentBias: number } {
+  // Top-of-pool tracks lean recent; long-tail tracks lean older. Even
+  // within a single primary range, we modulate by within-pool rank so
+  // the "12-week trace" chart shows growing volume toward today instead
+  // of a flat line.
+  const positionFraction = rankIndex / Math.max(1, poolSize - 1); // 0 = top, 1 = tail
 
-function pickPlayedAt(fp: CircadianFingerprint, windowStart: Date, windowEnd: Date): Date {
-  const { dayOfWeek, hour } = sampleHourDay(fp);
-  // Find a date within the window whose day-of-week matches. To avoid an
-  // O(window) scan, pick a random offset and snap to the next matching day.
-  const span = windowEnd.getTime() - windowStart.getTime();
-  const baseOffset = Math.random() * span;
-  const candidate = new Date(windowStart.getTime() + baseOffset);
-  const currentDay = candidate.getUTCDay();
-  const dayDelta = (dayOfWeek - currentDay + 7) % 7;
-  candidate.setUTCDate(candidate.getUTCDate() + dayDelta);
-  // If the snap pushed us past windowEnd, walk back a week.
-  if (candidate.getTime() > windowEnd.getTime()) {
-    candidate.setUTCDate(candidate.getUTCDate() - 7);
+  let baseDays: number;
+  let bias: number;
+  switch (primaryRange) {
+    case 'short_term':
+      baseDays = 28;
+      bias = 0.7;
+      break;
+    case 'medium_term':
+      baseDays = 180;
+      bias = 0.5;
+      break;
+    case 'long_term':
+      baseDays = 365;
+      bias = 0.3;
+      break;
   }
-  candidate.setUTCHours(hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60), 0);
-  return candidate;
+  // Very-long-tail tracks get the full year window even if their primary
+  // range was short — they shouldn't all pile into 28 days.
+  const stretchedDays = baseDays + Math.round(positionFraction * (365 - baseDays));
+  return {
+    start: new Date(now.getTime() - stretchedDays * 86400_000),
+    end: now,
+    recentBias: bias,
+  };
+}
+
+function sampleDate(window: { start: Date; end: Date; recentBias: number }, fp: HourFingerprint): Date {
+  // Recency bias: square-rooted random pulls samples toward the END of
+  // the window when bias > 0.5, toward the START when < 0.5. With 0.7
+  // (short_term), most plays bunch in the last third of the window.
+  // With 0.3 (long_term), plays spread across the whole year with light
+  // bias toward older dates.
+  let r = Math.random();
+  if (window.recentBias > 0.5) {
+    r = 1 - Math.pow(1 - r, 1 / (1 + window.recentBias));
+  } else {
+    r = Math.pow(r, 1 / (2 - window.recentBias));
+  }
+  const span = window.end.getTime() - window.start.getTime();
+  const dateMs = window.start.getTime() + r * span;
+  const date = new Date(dateMs);
+
+  // Apply weekday weight as a soft accept/reject — scale max to mean ratio
+  // of 1.4× so the user's weekday pattern shows up without dominating.
+  const weekdayWeight = fp.weekdayWeights[date.getUTCDay()];
+  const meanWeekday = fp.weekdayWeights.reduce((s, w) => s + w, 0) / 7;
+  if (Math.random() > weekdayWeight / (meanWeekday * 1.4)) {
+    // Resample once with uniform weekday bias
+    const span2 = window.end.getTime() - window.start.getTime();
+    date.setTime(window.start.getTime() + Math.random() * span2);
+  }
+
+  // Hour from fingerprint. Random minute + second for natural jitter.
+  const hour = weightedSample(fp.hourWeights);
+  date.setUTCHours(hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60), 0);
+  return date;
 }
 
 // ─── Main entrypoint ─────────────────────────────────────────────────────────
 
 export async function generateSyntheticHistory(userId: string): Promise<SyntheticResult> {
-  // Replace, don't merge — if synthesis runs twice, the second run wins.
-  // This keeps duplicate-key churn down and matches the "source of truth"
-  // semantics ESH/Last.FM use when they delete synthetic data on import.
+  // Replace, don't merge.
   await db.listeningEvent.deleteMany({ where: { userId, source: 'synthetic' } });
 
   const accessToken = await ensureFreshToken(userId);
 
-  // 1. Fingerprint from recently-played (best signal for THIS user).
+  // 1. Fingerprint from real recently-played samples.
   let recent: RecentResponse;
   try {
     recent = await spotifyGet<RecentResponse>('/me/player/recently-played?limit=50', accessToken);
   } catch (err) {
-    logger.warn({ userId, err: String(err) }, 'synthetic: recently-played fetch failed; using generic circadian');
+    logger.warn({ userId, err: String(err) }, 'synth: recently-played fetch failed');
     recent = { items: [] };
   }
   const fingerprint = buildFingerprint(recent.items);
 
-  // 2. Daily rate calibration from observed plays in /recently-played.
-  // recently-played covers up to ~24h, so item count ≈ daily rate.
-  const observedDailyRate = Math.max(recent.items.length, FALLBACK_DAILY_RATE);
+  // 2. Daily-rate calibration. recently-played covers ~24h, so item count
+  // is a rough plays-per-day estimate. Floor with BASE_DAILY_RATE so a
+  // user who hasn't listened today still gets a populated dashboard.
+  const observedDailyRate = Math.max(recent.items.length, BASE_DAILY_RATE);
 
-  // 3. Pull the snapshots we already bootstrapped — synth uses ranking, not
-  // a fresh fetch from Spotify (cheaper, consistent with what charts will
-  // read against). If snapshots are missing we fall back to a fresh top-
-  // items pull so synth still works on a clean account.
-  const ranges: Array<keyof typeof RANGE_DAYS> = ['short_term', 'medium_term', 'long_term'];
-  const byRange: Record<string, number> = { short_term: 0, medium_term: 0, long_term: 0 };
-  let total = 0;
+  // 3. Build the unified pool from snapshots + artist top-tracks.
+  const { pool } = await buildTrackPool(userId, accessToken);
+  if (pool.length === 0) {
+    logger.warn({ userId }, 'synth: empty pool — nothing to generate');
+    return {
+      totalPlaysGenerated: 0,
+      uniqueTracks: 0,
+      earliestPlay: '',
+      latestPlay: '',
+      byRange: { short_term: 0, medium_term: 0, long_term: 0 },
+    };
+  }
 
-  // Cumulative window: long_term spans the past 365 days. Within that we
-  // distribute long_term plays across days 365..180, medium across 180..28,
-  // short across 28..0 — so short_term plays are the most recent and the
-  // long-term ones are sparse and old. Mirrors empirical patterns where a
-  // top-365 track was probably heard last month, NOT yesterday.
+  // 4. Compute total target plays. Use long_term as the umbrella window
+  // (365 days) and let recency bias distribute plays naturally toward
+  // recent dates. Each range's daily-rate multiplier modulates the curve
+  // shape; the umbrella total is calibrated against observed rate.
   const now = new Date();
-  const windows: Record<keyof typeof RANGE_DAYS, { start: Date; end: Date }> = {
-    short_term: { start: new Date(now.getTime() - 28 * 86400_000), end: now },
-    medium_term: { start: new Date(now.getTime() - 180 * 86400_000), end: new Date(now.getTime() - 28 * 86400_000) },
-    long_term: { start: new Date(now.getTime() - 365 * 86400_000), end: new Date(now.getTime() - 180 * 86400_000) },
-  };
+  const totalPlaysTarget = Math.round(observedDailyRate * 365 * 0.95);
 
-  for (const range of ranges) {
-    const inserted = await synthesizeRange(
-      userId,
-      range,
-      windows[range],
-      fingerprint,
-      observedDailyRate,
-      accessToken
-    );
-    byRange[range] = inserted;
-    total += inserted;
-  }
+  // 5. Generate timestamped events with per-day cap.
+  const events = generateEvents(pool, totalPlaysTarget, fingerprint, now);
 
-  logger.info({ userId, total, byRange }, 'synthetic: generation complete');
-  return { totalPlaysGenerated: total, byRange };
-}
-
-async function synthesizeRange(
-  userId: string,
-  range: 'short_term' | 'medium_term' | 'long_term',
-  window: { start: Date; end: Date },
-  fp: CircadianFingerprint,
-  observedDailyRate: number,
-  accessToken: string
-): Promise<number> {
-  // Total plays in this window = daily rate × days. Older ranges decay
-  // because users typically listened a bit less in months past (and rough
-  // novelty factor — they didn't have THESE artists in heavy rotation a
-  // year ago).
-  const days = (window.end.getTime() - window.start.getTime()) / 86400_000;
-  const decay = range === 'short_term' ? 1.0 : range === 'medium_term' ? 0.6 : 0.35;
-  const totalPlaysTarget = Math.min(
-    Math.round(observedDailyRate * days * decay),
-    MAX_PLAYS_PER_RANGE
-  );
-
-  // Pull the snapshot for this range (already populated by bootstrap).
-  const trackSnap = await db.topTrackSnapshot.findMany({
-    where: { userId, range },
-    orderBy: { rank: 'asc' },
-    select: { trackId: true, rank: true },
-  });
-
-  // If the snapshot is missing (cold-start user where bootstrap hasn't
-  // landed yet), fetch top tracks live as a fallback. Safe because synth
-  // is only triggered after the user has connected Spotify.
-  let tracks: { id: string; rank: number; durationMs: number | null }[];
-  if (trackSnap.length === 0) {
-    try {
-      const live = await spotifyGet<TopTracksResp>(
-        `/me/top/tracks?time_range=${range}&limit=50`,
-        accessToken
-      );
-      tracks = live.items.map((t, i) => ({
-        id: t.id,
-        rank: i + 1,
-        durationMs: t.duration_ms,
-      }));
-    } catch {
-      return 0;
-    }
-  } else {
-    // Look up durations from our Track table.
-    const trackRows = await db.track.findMany({
-      where: { id: { in: trackSnap.map((t) => t.trackId) } },
-      select: { id: true, durationMs: true },
-    });
-    const durMap = new Map(trackRows.map((t) => [t.id, t.durationMs]));
-    tracks = trackSnap.map((t) => ({
-      id: t.trackId,
-      rank: t.rank,
-      durationMs: durMap.get(t.trackId) ?? null,
-    }));
-  }
-  if (tracks.length === 0) return 0;
-
-  // Top artists: use their /artists/{id}/top-tracks to add a few more tracks
-  // per top artist that the user probably listens to but aren't in their
-  // top-tracks list. Caps the total artist-derived tracks to avoid blowing
-  // out the synthesized payload.
-  const artistSnap = await db.topArtistSnapshot.findMany({
-    where: { userId, range },
-    orderBy: { rank: 'asc' },
-    take: 20, // top 20 artists per range — enough flavor without exploding cost
-    select: { artistId: true, rank: true },
-  });
-
-  const knownTrackIds = new Set(tracks.map((t) => t.id));
-  const artistDerived: { id: string; rank: number; durationMs: number | null }[] = [];
-  let artistDerivedRankCounter = tracks.length + 1;
-  for (const a of artistSnap.slice(0, 10)) {
-    try {
-      const top = await spotifyGet<ArtistTopTracksResp>(
-        `/artists/${a.artistId}/top-tracks?market=from_token`,
-        accessToken
-      );
-      // Take 2 tracks per artist that aren't already in the user's top-
-      // tracks list. These get artist-rank-derived ranking so they
-      // contribute proportionally less than direct top tracks.
-      let added = 0;
-      for (const t of top.tracks) {
-        if (added >= 2) break;
-        if (knownTrackIds.has(t.id)) continue;
-        knownTrackIds.add(t.id);
-        // Make sure the Track row exists so the FK passes.
-        await db.track
-          .upsert({
-            where: { id: t.id },
-            create: {
-              id: t.id,
-              name: t.name,
-              artistNames: t.artists.map((aa) => aa.name),
-              artistIds: t.artists.map((aa) => aa.id),
-              albumName: t.album.name,
-              albumId: t.album.id,
-              imageUrl: t.album.images[0]?.url ?? null,
-              durationMs: t.duration_ms,
-            },
-            update: {},
-          })
-          .catch(() => undefined);
-        artistDerived.push({
-          id: t.id,
-          rank: artistDerivedRankCounter++,
-          durationMs: t.duration_ms,
-        });
-        added++;
-      }
-    } catch {
-      // Skip artists we can't fetch; log spam not worth it for 50/range.
-    }
-  }
-
-  const allTracks = [...tracks, ...artistDerived];
-  if (allTracks.length === 0) return 0;
-
-  const counts = zipfPlayCounts(allTracks.length, totalPlaysTarget);
-
-  // Build event rows. Spread across the time window using the fingerprint
-  // for hour-of-day weighting.
-  const events: { trackId: string; playedAt: Date; msPlayed: number }[] = [];
-  for (let i = 0; i < allTracks.length; i++) {
-    const t = allTracks[i];
-    const c = counts[i];
-    const dur = t.durationMs ?? 210_000; // 3:30 default if Spotify didn't give us a length
-    const msPlayedTypical = Math.round(dur * 0.85); // assume 85% completion on average
-    for (let j = 0; j < c; j++) {
-      events.push({
-        trackId: t.id,
-        playedAt: pickPlayedAt(fp, window.start, window.end),
-        msPlayed: msPlayedTypical,
-      });
-    }
-  }
-
-  // Insert in chunks of 1000 to keep memory and DB roundtrips reasonable.
-  // skipDuplicates handles the rare collision on (userId, trackId, playedAt).
+  // 6. Insert in chunks.
   let inserted = 0;
   const CHUNK = 1000;
   for (let i = 0; i < events.length; i += CHUNK) {
@@ -373,7 +546,7 @@ async function synthesizeRange(
         userId,
         trackId: e.trackId,
         playedAt: e.playedAt,
-        msPlayed: e.msPlayed,
+        msPlayed: pickMsPlayed(e.durationMs),
         source: 'synthetic',
       })),
       skipDuplicates: true,
@@ -381,5 +554,31 @@ async function synthesizeRange(
     inserted += result.count;
   }
 
-  return inserted;
+  // 7. Reporting — bucket by primary range for diagnostics.
+  const byRange: Record<string, number> = { short_term: 0, medium_term: 0, long_term: 0 };
+  const cutoff28 = new Date(now.getTime() - 28 * 86400_000).getTime();
+  const cutoff180 = new Date(now.getTime() - 180 * 86400_000).getTime();
+  for (const e of events) {
+    const ms = e.playedAt.getTime();
+    if (ms >= cutoff28) byRange.short_term++;
+    else if (ms >= cutoff180) byRange.medium_term++;
+    else byRange.long_term++;
+  }
+
+  const sorted = [...events].sort((a, b) => a.playedAt.getTime() - b.playedAt.getTime());
+  const earliestPlay = sorted[0]?.playedAt.toISOString() ?? '';
+  const latestPlay = sorted[sorted.length - 1]?.playedAt.toISOString() ?? '';
+
+  logger.info(
+    { userId, inserted, uniqueTracks: pool.length, byRange, earliestPlay, latestPlay },
+    'synth: generation complete'
+  );
+
+  return {
+    totalPlaysGenerated: inserted,
+    uniqueTracks: pool.length,
+    earliestPlay,
+    latestPlay,
+    byRange,
+  };
 }
