@@ -1,5 +1,10 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Cloud Run runs on Alpine (musl libc); local dev runs on Windows or
+  // Linux (glibc). Prisma needs the right native engine binary for each.
+  // Without `linux-musl-openssl-3.0.x` the runtime can't load
+  // libquery_engine-linux-musl.so.node and every DB call throws.
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
