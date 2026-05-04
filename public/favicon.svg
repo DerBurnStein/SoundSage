@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SoundSage favicon — vermilion hanko (Japanese seal) bearing the kanji
+  聴 ("listen / to hear attentively"). The same character appears as the
+  brand mark in the masthead, so the tab icon and the in-app logo visually
+  echo each other.
+
+  Designed to read at 16×16 (browser tab) up through 512×512 (PWA icon).
+  Detail is intentionally minimal — at 16px only the seal silhouette plus
+  the dominant strokes of the kanji survive, which is exactly the
+  East-Asian seal aesthetic we want.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges">
+  <!-- Outer seal: vermilion (shu / 朱) red, slightly inset from the
+       canvas so even a 1px browser border doesn't crowd the character.
+       Square corners reinforce the hanko (印章) feel. -->
+  <rect x="3" y="3" width="58" height="58" fill="#c1272d" />
+  <!-- Inner hairline border — gives the seal an embossed, deliberate
+       look rather than a flat block. Color tuned to read as off-cream
+       against the red without competing with the kanji. -->
+  <rect x="6" y="6" width="52" height="52" fill="none" stroke="#f0e8d6" stroke-width="1.5" opacity="0.55" />
+  <!-- Kanji 聴 in cream (washi) on the seal. Drawn as a single text
+       element using a generic East-Asian serif stack so the browser
+       picks the best installed mincho/Noto Serif JP variant. Bold weight
+       so strokes survive at 16×16. -->
+  <text
+    x="32"
+    y="48"
+    text-anchor="middle"
+    font-family="'Shippori Mincho', 'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', serif"
+    font-size="42"
+    font-weight="700"
+    fill="#f0e8d6"
+  >聴</text>
+</svg>

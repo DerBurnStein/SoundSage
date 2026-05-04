@@ -80,6 +80,7 @@ export function OnboardingModal() {
       }}
     >
       <div
+        className="onboarding-modal-card"
         style={{
           maxWidth: 640,
           width: '100%',

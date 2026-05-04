@@ -237,6 +237,7 @@ export function SettingsButton() {
         <div
           role="dialog"
           aria-label="Settings"
+          className="settings-popover"
           style={{
             position: 'absolute',
             top: 'calc(100% + 8px)',

@@ -28,6 +28,26 @@ const mincho = Shippori_Mincho({
 export const metadata: Metadata = {
   title: 'SoundSage',
   description: 'Your personal Spotify listening almanac.',
+  icons: {
+    // SVG favicon — vermilion seal with the kanji 聴 ("listen"). Same
+    // character we use in the masthead hanko, so the tab icon visually
+    // echoes the brand. SVG stays crisp at every size (16, 32, 192, 512)
+    // without shipping raster fallbacks. Modern browsers all support
+    // SVG favicons; iOS Safari falls back to no icon, which is fine.
+    icon: { url: '/favicon.svg', type: 'image/svg+xml' },
+    apple: '/favicon.svg',
+    shortcut: '/favicon.svg',
+  },
+};
+
+// Viewport tag — Next.js 14's preferred export form. Without this, mobile
+// browsers render the page at a synthetic 980px viewport and zoom out,
+// which makes everything tiny instead of triggering responsive CSS.
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#c1272d',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

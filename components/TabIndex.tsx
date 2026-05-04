@@ -46,6 +46,7 @@ export function TabIndex({ subtitle, items }: TabIndexProps) {
         </p>
 
         <div
+          className="tab-index-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(2, 1fr)',

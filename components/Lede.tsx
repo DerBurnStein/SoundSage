@@ -27,6 +27,7 @@ export function Lede({ eyebrow, value, subtitle, readout, aside, loading }: Lede
 
   return (
     <section
+      className="lede-section"
       style={{
         padding: '40px 28px 48px',
         borderBottom: '1px solid var(--rule)',
@@ -35,6 +36,7 @@ export function Lede({ eyebrow, value, subtitle, readout, aside, loading }: Lede
       {/* Cap content to ~1380 like the other editorial bands so the lede
           doesn't sprawl across ultra-wide screens with empty middle space. */}
       <div
+        className="lede-grid"
         style={{
           maxWidth: 1380,
           margin: '0 auto',
@@ -164,6 +166,7 @@ export function LedeHighlights({ items }: LedeHighlightsProps) {
   if (items.length === 0) return null;
   return (
     <div
+      className="lede-highlights"
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,

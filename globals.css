@@ -400,3 +400,117 @@ body *, body *::before, body *::after {
     font-size: 22px !important;
   }
 }
+
+/* ─────────────────────────────────────────────────────
+   Responsive layout — content sections
+   The dashboard's editorial bands (Lede, StatStrip, TabIndex, etc.) use
+   fixed grid templates that look great on desktop but need to collapse
+   on phones and tablets. These rules target the className hooks added
+   in the components and override only the grid + padding at breakpoints
+   — visual style (typography, color, hierarchy) is preserved.
+
+   Breakpoints, mobile-first reading:
+     480px   pocket phones
+     720px   wide phones / portrait tablets
+     1024px  landscape tablets
+   ───────────────────────────────────────────────────── */
+
+/* ── Tablet and below (≤1024px) ─────────────────────── */
+@media (max-width: 1024px) {
+  /* StatStrip: collapse 4-up to 2-up so each tile keeps a usable width.
+     Right-rule stays via the per-tile borderRight inline style; that's
+     fine — it just doesn't reach the bottom row of the wrapped grid. */
+  .stat-strip {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Lede aside drops below the big number. The aside's left border
+     would look strange in stacked mode (vertical rule with no companion
+     above it), so we hide it via the rule below. */
+  .lede-grid {
+    grid-template-columns: 1fr !important;
+    gap: 24px !important;
+  }
+  .lede-grid > div + div {
+    border-left: none !important;
+    padding-left: 0 !important;
+    border-top: 1px solid var(--rule);
+    padding-top: 20px !important;
+  }
+
+  /* Lede highlights: 3-across at desktop becomes 1-across on tablet —
+     each highlight is text-heavy and benefits from full width. */
+  .lede-highlights {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+}
+
+/* ── Wide phones / portrait tablets (≤720px) ────────── */
+@media (max-width: 720px) {
+  /* Tighten section padding everywhere so charts get more pixels */
+  section {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /* TabIndex grid: 2-up cards become 1-up rows. The dotted/solid
+     borders between cards still draw the editorial dividers. */
+  .tab-index-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Lede heading numbers shrink so they don't hard-wrap or clip. */
+  .lede-grid {
+    gap: 16px !important;
+  }
+  .lede-grid > div:first-child > * {
+    font-size: clamp(48px, 14vw, 96px) !important;
+  }
+
+  /* Reduce extreme heights of decorative chart elements so they fit. */
+  .stat-strip-tile {
+    padding: 18px 16px 20px !important;
+  }
+}
+
+/* ── Pocket phones (≤480px) ─────────────────────────── */
+@media (max-width: 480px) {
+  /* StatStrip becomes single column. With 4 tiles that's a tall stack
+     but each tile is highly informative on its own. */
+  .stat-strip {
+    grid-template-columns: 1fr !important;
+  }
+  .stat-strip-tile {
+    border-right: none !important;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* Settings popover: detach from anchor and become a full-width
+     bottom sheet anchored under the gear. The fixed 320px width
+     would clip on iPhone SE-class devices. */
+  .settings-popover {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: auto !important;
+    max-height: 80vh !important;
+    border: none !important;
+    border-top: 1px solid var(--ink) !important;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.22) !important;
+  }
+
+  /* Onboarding modal: tighten internal padding so the form controls
+     (file picker, username input, CTAs) have room without wrapping. */
+  .onboarding-modal-card {
+    padding: 18px !important;
+  }
+}
+
+/* ── All viewports: prevent horizontal scroll ───────── */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}

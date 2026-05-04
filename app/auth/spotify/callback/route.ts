@@ -44,15 +44,48 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Delete immediately — one-time use
   await redis.del(`spotify_pkce:${state}`);
 
-  // Exchange code for tokens
-  const tokens = await exchangeCodeForTokens(
-    code,
-    pkce.verifier,
-    process.env.SPOTIFY_REDIRECT_URI!
-  );
+  // Exchange code for tokens. Failures here are usually a redirect_uri
+  // mismatch on Spotify's side — surface as a clean error redirect
+  // instead of a 500 stack trace.
+  let tokens;
+  try {
+    tokens = await exchangeCodeForTokens(
+      code,
+      pkce.verifier,
+      process.env.SPOTIFY_REDIRECT_URI!
+    );
+  } catch (err) {
+    logger.warn(
+      { err: String(err), userId: pkce.userId },
+      'Spotify callback: token exchange failed'
+    );
+    home.searchParams.set('spotify', 'token_exchange_failed');
+    return NextResponse.redirect(home);
+  }
 
-  // Fetch Spotify user profile
-  const spotifyUser = await spotifyGet<SpotifyUser>('/me', tokens.access_token);
+  // Fetch Spotify user profile. A 403 here is the most common cause of
+  // OAuth failures: when the Spotify app is in Development Mode (the
+  // default for new dev apps), only Spotify accounts on the explicit
+  // test-user list can call /me — every other account gets tokens but
+  // 403s on every API call. We surface this as a specific error code
+  // so the dashboard can render an actionable message instead of a
+  // generic "something went wrong."
+  let spotifyUser: SpotifyUser;
+  try {
+    spotifyUser = await spotifyGet<SpotifyUser>('/me', tokens.access_token);
+  } catch (err) {
+    const msg = String(err);
+    const isForbidden = msg.includes('403');
+    logger.warn(
+      { err: msg, userId: pkce.userId, isForbidden },
+      'Spotify callback: /me lookup failed'
+    );
+    home.searchParams.set(
+      'spotify',
+      isForbidden ? 'not_authorized_account' : 'profile_fetch_failed'
+    );
+    return NextResponse.redirect(home);
+  }
 
   const profileImage = spotifyUser.images?.[0]?.url ?? null;
 

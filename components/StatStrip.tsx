@@ -34,6 +34,7 @@ export function StatStrip({ tiles, loading }: StatStripProps) {
 
   return (
     <section
+      className="stat-strip"
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${tiles.length}, 1fr)`,
@@ -43,6 +44,7 @@ export function StatStrip({ tiles, loading }: StatStripProps) {
       {tiles.map((t, i) => (
         <div
           key={t.label}
+          className="stat-strip-tile"
           style={{
             padding: '24px 24px 26px',
             borderRight: i < tiles.length - 1 ? '1px solid var(--rule)' : 'none',
@@ -79,6 +81,7 @@ export function StatStrip({ tiles, loading }: StatStripProps) {
 function StatStripSkeleton({ count }: { count: number }) {
   return (
     <section
+      className="stat-strip"
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${count}, 1fr)`,
