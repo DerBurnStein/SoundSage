@@ -3,6 +3,17 @@
 > Operational checklist to take SoundSage from "design done, no infra" to "live and working on GCP."
 > Engineering phases: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 > Spec: [SoundSage_Dev_Handoff.md](SoundSage_Dev_Handoff.md)
+> Current entry point: [README.md](README.md)
+
+---
+
+## Status — 2026-05-05
+
+**Stages 0-10 complete. Live at https://soundsage.dev.**
+
+For day-to-day ops procedures (regenerate demo data, run synthetic for a user, recover from prefetch-blocked routes, etc.), see [§11 — Post-launch operations](#11--post-launch-operations) at the bottom of this file. The original launch stages are kept above as historical reference; if you're bootstrapping a fresh staging environment they still apply verbatim.
+
+---
 
 Each stage has a **gate** — don't proceed until it passes. Commands assume `gcloud` is installed and authenticated.
 
@@ -317,3 +328,120 @@ DELETE FROM "User" WHERE id = '...';   -- cascades to everything
 ## What's next
 
 Stage 0 is unblocked — start by creating the two GCP projects and the Spotify + Google OAuth clients.
+
+---
+
+## §11 — Post-launch operations
+
+Procedures that have come up repeatedly since `soundsage.dev` went live. Each assumes you have `gcloud` authenticated and the Cloud SQL Auth Proxy installed (and ideally running on `localhost:15433`).
+
+### 11.1 — Re-seed the public demo user
+
+The `/demo/start` route relies on a pre-seeded user record (`demo-public-2026`) populated with snapshots + ~14k synthetic listening events. If you need to regenerate that data (e.g., to refresh it from a different source user, or after a schema change):
+
+```bash
+# 1. Cloud SQL Auth Proxy in one terminal
+cloud-sql-proxy soundsage-prod:us-central1:soundsage-prod --port 15433
+
+# 2. In another terminal:
+DATABASE_URL="postgresql://soundsage:<DB_PASS>@localhost:15433/soundsage" \
+  npx tsx scripts/seed-demo-user.mjs <SOURCE_USER_ID>
+```
+
+`<SOURCE_USER_ID>` is the cuid of the user whose snapshots + events should be cloned. Defaults to the dev user if omitted. The script wipes any prior demo rows in a transaction first, so it's safe to re-run.
+
+### 11.2 — Run synthetic generation for one user
+
+To regenerate one user's synthetic data (e.g., after tuning the engine):
+
+```bash
+DATABASE_URL=...  TOKEN_ENCRYPTION_KEY=... \
+  SPOTIFY_CLIENT_ID=...  SPOTIFY_CLIENT_SECRET=... \
+  npx tsx scripts/regen-synthetic.mjs <USER_ID>
+```
+
+Pulls the secrets from prod via `gcloud secrets versions access latest --secret=...` if you've authenticated. The script prints a distribution report at the end (top tracks with shares, heaviest days, top artists, hour-of-day histogram) — sanity-check that:
+
+- Top track share ≤ 4% (cap)
+- Top artist share ≤ 38% (cap)
+- Daily distribution shows real variance (p10 ≪ p50 ≪ p90, some zero days, some heavy days)
+- Hour-of-day distribution has three peaks (~8am, ~12pm, ~7-8pm)
+
+### 11.3 — Investigate "demo mode resets after navigation"
+
+Symptom: visitor clicks "try demo", lands on populated dashboard, but next click drops them into the SignInPrompt.
+
+Almost certainly the demo cookie is being cleared by something prefetching `/demo/exit`. Check:
+
+```bash
+gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=soundsage-web AND httpRequest.requestUrl:demo' \
+  --limit 20 --project=soundsage-prod \
+  --format="value(timestamp,httpRequest.requestUrl)" --freshness=15m
+```
+
+If you see `/demo/exit?_rsc=...` requests interleaved with `/demo/start`, a `<Link>` somewhere is auto-prefetching `/demo/exit`. Fix by switching the link to a plain `<a>` so Next.js doesn't prefetch it. The `DemoBanner` component is the only place this is supposed to live; if a new contributor adds `<Link href="/demo/exit">` somewhere else, this will break again.
+
+### 11.4 — Diagnose Spotify OAuth failures
+
+If the callback returns 500 or the user lands on `/?spotify=not_authorized_account`, check Cloud Run stderr:
+
+```bash
+gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=soundsage-web AND severity>=WARNING AND textPayload:spotify' \
+  --limit 20 --project=soundsage-prod \
+  --format="value(timestamp,severity,textPayload)" --freshness=30m
+```
+
+The most common cause is the Spotify app being in **Development Mode** (default for new dev apps) — only accounts on the User Management list can call `/me`. Add the affected account at https://developer.spotify.com/dashboard → SoundSage → User Management → Add User. The callback now redirects to `/?spotify=not_authorized_account` instead of throwing 500.
+
+### 11.5 — Trigger bootstrap manually for a user
+
+If a user's `TopTrackSnapshot` or `TopArtistSnapshot` rows are missing (or only one of them — there was a v1 bug where artist upserts failed transactionally):
+
+```bash
+DATABASE_URL=...  TOKEN_ENCRYPTION_KEY=... \
+  SPOTIFY_CLIENT_ID=...  SPOTIFY_CLIENT_SECRET=... \
+  npx tsx scripts/run-bootstrap.mjs <USER_ID>
+```
+
+Or simpler: clicking "Run sync now" in Settings now triggers `bootstrapTopItems()` automatically when EITHER snapshot count is 0. See `app/api/sync/trigger/route.ts`.
+
+### 11.6 — Roll back to a previous Cloud Run revision
+
+```bash
+gcloud run revisions list --service=soundsage-web --region=us-central1
+gcloud run services update-traffic soundsage-web \
+  --region=us-central1 --to-revisions=<REVISION_NAME>=100
+```
+
+Useful when a deploy introduces a regression. Each `gcloud run deploy` creates a new revision; old ones stay around for at least a week.
+
+### 11.7 — Check synthetic data tagging is honored
+
+Real-data import paths (`/api/import/spotify-zip`, `/api/import/lastfm`) are required to delete `source: 'synthetic'` events for a user before persisting their own data. Verify with:
+
+```sql
+SELECT source, COUNT(*) FROM listening_events WHERE "userId" = '<USER_ID>' GROUP BY source;
+```
+
+After an ESH or Last.FM import, you should see rows for `extended_history` or `lastfm_import` and **zero** for `synthetic`. If synthetic rows persist, the import runner's `deleteMany` step failed — check Cloud Run logs for that import's job ID.
+
+### 11.8 — Pull recent app errors
+
+```bash
+gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=soundsage-web AND severity>=ERROR' \
+  --limit 30 --project=soundsage-prod \
+  --format="value(timestamp,severity,httpRequest.requestUrl,textPayload)" \
+  --freshness=1h
+```
+
+Sentry is the better front-end for this if it's set up; this is the cli-fast version.
+
+### 11.9 — Common production gotchas (cribbed from PHASE_7_LAUNCH.md)
+
+| Symptom | Fix |
+|---|---|
+| Cookies not surviving a redirect | Build the response manually with `new NextResponse(null, { headers: { Location, 'Set-Cookie': ... } })` instead of `NextResponse.redirect().cookies.set()`. |
+| `req.url` is `http://0.0.0.0:8080` | Use `process.env.NEXTAUTH_URL` as the public origin. |
+| Sticky header detaches on scroll | `overflow-x: hidden` on html/body kills `position: sticky`. Use `overflow-x: clip`. |
+| Settings popover clipped on iPhone SE | The popover detaches into a full-width bottom sheet at ≤480px via the `.settings-popover` class. |
+| Spotify 403 on /me for new test user | Spotify Dev Mode allowlist. Add the user in the Spotify dashboard. |

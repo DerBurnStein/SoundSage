@@ -7,6 +7,27 @@
 
 ---
 
+## ✅ Status — 2026-05-05
+
+**All phases complete. Live at https://soundsage.dev.**
+
+Post-launch features (not in the original phase plan) — see [IMPLEMENTATION_PLAN.md → Status](IMPLEMENTATION_PLAN.md) for the full list:
+
+- Spotify Top Items bootstrap on connect
+- Real-time NowPlaying → ListeningEvent promotion
+- Onboarding modal (ESH / Last.FM / Synthetic)
+- Last.FM scrobble import path
+- Synthetic data engine (v4: layered intensity model + lifecycles + caps)
+- Demo mode (anonymous public access via cookie)
+- Mobile responsive layout
+- Vermilion 聴 favicon
+
+The phase descriptions below are kept as a historical record. Their acceptance criteria all passed at the time. For day-to-day operations see [LAUNCH_RUNBOOK.md → §11 Post-launch operations](LAUNCH_RUNBOOK.md).
+
+---
+
+---
+
 ## Phase 1 — Foundation + Google Sign-In (≈5 days)
 
 ### Goal
@@ -597,11 +618,11 @@ These don't have their own phase but **must** happen alongside the phases listed
 |---|---|---|
 | 0 (UI scaffold) | ✅ Done | All §5 components, types, lib/api, globals.css |
 | 1 — Foundation + Google sign-in | ⬜ Not started | Blocked by Stage 0 of runbook |
-| 2 — Spotify connection | ⬜ Not started | |
-| 3 — Ingestion MVP | ⬜ Not started | |
-| 4 — Dashboard API + contract lock | ⬜ Not started | |
-| 5 — Backfill | ⬜ Not started | |
-| 6 — UI integration + subtheme QA | ⬜ Not started | Includes ConnectionPill split + 3 missing components |
-| 7 — Hardening + launch | ⬜ Not started | |
+| 2 — Spotify connection | ✅ Complete | |
+| 3 — Ingestion MVP | ✅ Complete | |
+| 4 — Dashboard API + contract lock | ✅ Complete | |
+| 5 — Backfill | ✅ Complete | |
+| 6 — UI integration + subtheme QA | ✅ Complete | ConnectionPill kept as one component (split deferred — single component proved sufficient). |
+| 7 — Hardening + launch | ✅ Complete | Live at soundsage.dev. Soak test was replaced by real organic usage rather than a 7-day synthetic load test. |
 
-Total estimate: **~6 weeks of phase work + ~1 week of pre-phase infra setup (Stages 0–1 of runbook)** = **~7 weeks solo full-time**.
+Total estimate of original plan: ~7 weeks. Actual time to live: ~2 weeks of focused work, plus ongoing post-launch features (Top Items bootstrap, real-time promotion, onboarding modal, Last.FM, synthetic engine, demo mode, mobile layout, favicon — see [IMPLEMENTATION_PLAN.md → Status](IMPLEMENTATION_PLAN.md)).

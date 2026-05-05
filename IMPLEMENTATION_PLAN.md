@@ -2,8 +2,39 @@
 
 > Source-of-truth spec: [SoundSage_Dev_Handoff.md](SoundSage_Dev_Handoff.md)
 > Operational checklist: [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md)
-> Current state: UI scaffold complete (all §5 components), backend & app wiring not started.
+> Current entry point: [README.md](README.md)
 > This plan supersedes the handoff's §13 four-week sketch — see "Why this differs from §13" at bottom.
+
+---
+
+## Status — 2026-05-05
+
+**All seven phases complete. Live at https://soundsage.dev.**
+
+What shipped beyond the original plan:
+
+| Feature | Why it was added |
+|---|---|
+| **Spotify Top Items bootstrap** ([lib/spotify-bootstrap.ts](lib/spotify-bootstrap.ts)) | Fires after OAuth connect to populate `TopTrackSnapshot` / `TopArtistSnapshot` tables across short / medium / long term. Without it, brand-new users see empty charts for weeks while their `recently-played` events accumulate. |
+| **Real-time NowPlaying → ListeningEvent promotion** ([app/api/listening/promote/route.ts](app/api/listening/promote/route.ts)) | Detects track-end transitions client-side (no extra Spotify quota — reuses the existing 5s poll) and writes a play to the DB immediately. Spotify's `recently-played` indexer trails reality by 30-90s; this closes that gap and matches stats.fm-grade currency. Fuzzy ±90s dedupe in `lib/sync.ts` prevents duplicates when the eventual `recently-played` sync re-encounters the same play. |
+| **Onboarding modal** ([components/OnboardingModal.tsx](components/OnboardingModal.tsx)) | Three-tab dialog asking how to populate the dashboard: Spotify ESH ZIP, Last.FM scrobbles, or synthetic. Auto-opens on first login, re-openable from Settings. |
+| **Last.FM scrobble import** ([lib/lastfm-scrobbles.ts](lib/lastfm-scrobbles.ts), `/api/import/lastfm`) | Paginates `user.getRecentTracks` (200/page), resolves each scrobble to a Spotify track via `/search` (Redis-cached 30d), persists with `source: 'lastfm_import'`. Shared sliding-window Redis rate limiter at 4 req/s. |
+| **Synthetic data engine v4** ([lib/synthetic-history.ts](lib/synthetic-history.ts)) | Five-layer generator: daily intensity model + per-track lifecycles + per-day sampling + circadian fingerprint + completion model + per-track/per-artist caps. Produces ~14k events/year with realistic Zipfian top-track share (~2%), three-peak hour curve, and day-to-day variance. See README.md for the full algorithm. |
+| **Demo mode** ([app/demo/start/route.ts](app/demo/start/route.ts), [components/DemoBanner.tsx](components/DemoBanner.tsx)) | Anonymous visitors hit `/demo/start` → cookie sets → routed to a pre-seeded public `demo-public-2026` user. Read endpoints opt in via `requireAuth({ allowDemo: true })`; writes reject demo with 403. The cookie is set via a manually-constructed `Set-Cookie` header because `NextResponse.cookies.set()` was silently dropping cookies on redirect responses in this Next.js / Cloud Run combination. |
+| **Mobile responsive layout** | Masthead nav stacks at ≤900px (tabs + time picker on separate rows). StatStrip 4-up → 2-up → 1-up. TabIndex grid responsive borders via `:nth-child`. Demo banner + lede number scale fluidly. Settings popover becomes a bottom sheet at ≤480px. |
+| **Vermilion 聴 favicon** ([public/favicon.svg](public/favicon.svg)) | SVG hanko stamp matches the in-app brand mark. |
+| **`source` audit column** | `ListeningEvent.source` enum extended to include `synthetic`, `lastfm_import`, `currently_playing` alongside the original `recently_played` and `extended_history`. ESH and Last.FM importers `deleteMany({ source: 'synthetic' })` before persisting, so synthetic data is replaced atomically when real history arrives. |
+
+Schema changes since Phase 1:
+- Added `User.onboardingCompletedAt` and `User.onboardingChoice` (migration `20260504054728_add_onboarding_state`)
+- Added `TopTrackSnapshot` and `TopArtistSnapshot` tables (migration `20260504034309_add_top_items_snapshots`)
+- Added `SpotifyAccount.needsReconnect` and `failureCount` (during Phase 5)
+
+The phase descriptions below are kept as a historical record of the original plan. Their acceptance criteria all passed at the time. Recent feature work is documented in README.md and tracked via git history.
+
+---
+
+## Original plan (preserved as historical reference)
 
 ---
 

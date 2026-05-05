@@ -1,5 +1,39 @@
 # Phase 7 — Launch Instructions
 
+---
+
+## ✅ Status — 2026-05-05: COMPLETE
+
+**Live at https://soundsage.dev.**
+
+What was actually done (compared to the plan below):
+
+- ✅ Production GCP project (`soundsage-prod`) bootstrapped with Cloud SQL, Upstash Redis, Secret Manager, Sentry
+- ✅ Cloud Run service `soundsage-web` deployed; current revision: `soundsage-web-00032-8pf` (and counting — see `gcloud run revisions list`)
+- ✅ Custom domain `soundsage.dev` (registered through Cloudflare) with managed SSL via Cloud Run domain mapping. Apex routing via 4 A + 4 AAAA records to Google's anycast IPs, Cloudflare in DNS-only mode (gray cloud).
+- ✅ Cloud Tasks queue + Cloud Scheduler 15-min cron wired to `/api/tasks/sync-all`
+- ✅ All four Cloud Monitoring alert policies configured
+- ✅ Privacy and Terms pages live and reachable
+- ⚠️ **Soak test (7-day unattended) — NOT executed.** Replaced by real organic usage. The dev account has been the production canary; alerts fired truthfully on a few real bugs and were resolved.
+- ✅ 24-hour personal smoke passed during the rollout window
+
+Post-launch features that landed after the original Phase 7 plan are tracked in [IMPLEMENTATION_PLAN.md → Status](IMPLEMENTATION_PLAN.md). Day-to-day ops procedures live in [LAUNCH_RUNBOOK.md → Post-launch operations](LAUNCH_RUNBOOK.md).
+
+Notable production gotchas discovered post-launch (worth keeping in this file for the next ops engineer):
+
+| Gotcha | Fix |
+|---|---|
+| `NextResponse.redirect(url).cookies.set(...)` silently drops the Set-Cookie header on Cloud Run + Next.js 14 | Build the response manually with `new NextResponse(null, { status: 302, headers: { Location, 'Set-Cookie': '...' } })`. See `app/demo/start/route.ts`. |
+| Next.js `<Link>` automatically prefetches its destination on render — for any route handler that has side effects (cookie set/clear) this fires the side effect ~270ms after page load | Use plain `<a>` for any link to a side-effecting route handler. |
+| Cloud Run container sees `req.url` as `http://0.0.0.0:8080/...` internally, so `new URL('/', req.url)` produces a Location the browser can't follow | Use `process.env.NEXTAUTH_URL` as the public origin for all server-issued redirects. |
+| `overflow-x: hidden` on `<html>` or `<body>` breaks `position: sticky` | Use `overflow-x: clip` instead (creates no new scroll container). |
+| `__Host-` and `__Secure-` prefixed cookies (NextAuth's defaults) have stricter requirements; setting Domain attribute or non-/ Path will silently fail | Don't set `Domain` on any cookie unless you know what you're doing; let the browser default to the request host. |
+| Spotify Dev Mode rejects any account not on the explicit test-user list with **403 on /me** (token exchange itself succeeds) | Add the user to Spotify Developer Dashboard → User Management. The callback now redirects to `/?spotify=not_authorized_account` instead of throwing 500. |
+
+---
+
+## Original launch instructions (preserved below as historical reference)
+
 > Code-side Phase 7 is done (error boundaries, delete-account flow, CSP, dep audit, Privacy/Terms). What follows is the infra + launch work that has to happen on real GCP, Spotify, and DNS — not in the repo.
 >
 > Each section has a **gate**: don't move on until you can answer "yes" to its check. If something fails, fix it before continuing — most issues compound.

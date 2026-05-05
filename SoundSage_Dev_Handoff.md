@@ -1,9 +1,33 @@
 # SoundSage — Developer Handoff
 
-> **Design reference:** `SoundSage Dashboard.html`  
-> **Scaffold files:** `handoff/` folder  
-> **Framework:** Next.js 14+ · TypeScript · CSS Variables  
+> **Design reference:** `SoundSage Dashboard.html`
+> **Scaffold files:** `handoff/` folder
+> **Framework:** Next.js 14+ · TypeScript · CSS Variables
 > **Date:** May 2026
+
+---
+
+## Status — 2026-05-05
+
+**This document is the original design + spec handoff. Most of it is still accurate** — the design tokens, component vocabulary, schema philosophy, and tab subthemes shipped almost verbatim. A handful of sections have been superseded or extended by post-launch work; this banner flags those so a reader doesn't follow stale guidance.
+
+**Currency map**:
+
+| Section | Status | Notes |
+|---|---|---|
+| §1 Overview, §2 Tech Stack, §4 Design Tokens, §6 Tab Subthemes | ✅ Current | Implemented as designed. |
+| §3 Repository Layout | ⚠️ Partly stale | `server/` directory is deprecated — there is no separate Express/BullMQ backend; the app is a single Next.js project. |
+| §5 Components | ⚠️ Mostly current | Originally planned `ConnectionPill` split into `AccountPill` + `SpotifyPill` was never executed; one component proved sufficient. New components added post-launch: `OnboardingModal`, `DemoBanner`. |
+| §7 Data Schema | ⚠️ Extended | Added `TopTrackSnapshot`, `TopArtistSnapshot`, `User.onboardingCompletedAt`, `User.onboardingChoice`, `SpotifyAccount.needsReconnect`, `SpotifyAccount.failureCount`. The `ListeningEvent.source` enum now includes `synthetic`, `lastfm_import`, `currently_playing` alongside the original `recently_played` and `extended_history`. |
+| §8 Spotify Ingestion | ⚠️ Extended | Two new ingestion paths added: real-time `currently-playing` → `ListeningEvent` promotion (closes Spotify's 30-90s indexer lag), and Spotify Top Items bootstrap on connect (populates `TopTrackSnapshot` / `TopArtistSnapshot`). Last.FM scrobble import (`/api/import/lastfm`) and synthetic data generator (`/api/import/synthetic`) are also new. |
+| §9 API Routes | ⚠️ Extended | Added: `/api/listening/promote`, `/api/import/lastfm[+/status]`, `/api/import/synthetic`, `/api/onboarding/state`, `/api/sync/progress`, `/api/sync/activity`. |
+| §10 Auth Setup, §11 Next.js Wiring, §12 Data Fetching | ✅ Current | Implemented as designed. |
+| §13 Phased Rollout (4 weeks) | ❌ Superseded | See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — the 4-week sketch was unrealistic; actual delivery was ~2 weeks of focused work to live + ongoing feature work. |
+| §14 Gotchas | ⚠️ Extended | Production-discovered gotchas (cookie-on-redirect, Link prefetch, sticky vs overflow, Spotify Dev Mode 403) live in [PHASE_7_LAUNCH.md → Notable production gotchas](PHASE_7_LAUNCH.md) and [LAUNCH_RUNBOOK.md → §11.9](LAUNCH_RUNBOOK.md). |
+
+For the current architecture in one place, see [README.md](README.md). For ops procedures see [LAUNCH_RUNBOOK.md → §11 Post-launch operations](LAUNCH_RUNBOOK.md).
+
+The original handoff continues below.
 
 ---
 
