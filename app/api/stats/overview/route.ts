@@ -6,7 +6,7 @@ import { getOverview } from '@/lib/page-data';
 import type { OverviewStats } from '@/types';
 
 export async function GET(req: NextRequest): Promise<NextResponse<OverviewStats>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<OverviewStats>;
 
   const parsedRange = parseRange(req.nextUrl.searchParams.get('range'));

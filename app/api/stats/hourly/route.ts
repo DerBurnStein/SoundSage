@@ -6,7 +6,7 @@ import { getHourly } from '@/lib/page-data';
 import type { HourlyStats } from '@/types';
 
 export async function GET(req: NextRequest): Promise<NextResponse<HourlyStats>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<HourlyStats>;
 
   const parsedRange = parseRange(req.nextUrl.searchParams.get('range'));

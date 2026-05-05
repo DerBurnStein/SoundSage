@@ -1,3 +1,10 @@
+// Force per-request rendering so the demo cookie + any time-range
+// search-param change always re-evaluate session state. Without this
+// Next.js can serve a cached "no session" payload after the cookie is
+// set, leaving the layout's demo banner showing while the page body
+// renders SignInPrompt.
+export const dynamic = 'force-dynamic';
+
 import { auth } from '@/lib/auth';
 import { parseRange } from '@/lib/range';
 import { resolveUserTimezone } from '@/lib/timezone';

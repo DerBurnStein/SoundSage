@@ -5,8 +5,17 @@ import {
   Noto_Serif_JP,
   Shippori_Mincho,
 } from 'next/font/google';
+// Force the root layout dynamic so its `await auth()` re-runs on every
+// request rather than being statically generated. Without this, Next.js
+// can render the layout once at build/first-request and reuse the
+// cached output even after the demo cookie is set, which leaves the
+// demo banner missing on visitors who set the cookie post-build.
+export const dynamic = 'force-dynamic';
+
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Masthead } from '@/components/Masthead';
+import { DemoBanner } from '@/components/DemoBanner';
+import { auth } from '@/lib/auth';
 import { Providers } from './providers';
 import '@/globals.css';
 
@@ -50,18 +59,20 @@ export const viewport = {
   themeColor: '#c1272d',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // `today` is only used as a display string in the masthead. Computing it
-  // on the server keeps it stable for the request, and there's no auth call
-  // here — every component below figures out its own auth needs. Keeping the
-  // root layout free of dynamic data lets Next.js cache the shell and
-  // navigations between pages don't tear down the masthead.
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
     year: 'numeric',
   });
+
+  // We resolve the session here so the DemoBanner can render on every page
+  // without each page importing it separately. Single auth() call per
+  // request — pages that need their own session call auth() again, but
+  // NextAuth's adapter caches the lookup so the second call is free.
+  const session = await auth();
+  const isDemo = session?.demo === true;
 
   return (
     <html
@@ -71,6 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <Providers>
           <ThemeProvider>
+            {isDemo && <DemoBanner />}
             <Masthead today={today} />
             <main>{children}</main>
           </ThemeProvider>

@@ -53,16 +53,21 @@ export function Lede({ eyebrow, value, subtitle, readout, aside, loading }: Lede
           gap: 64,
         }}
       >
-        <div>
+        {/* min-width: 0 lets this column shrink below content width — without
+            it, the long subtitle string forces the grid wider than the
+            viewport on mobile and the ellipsis never engages. */}
+        <div style={{ minWidth: 0 }}>
           <Caps>{eyebrow}</Caps>
           <Display
             size={108}
             weight={500}
+            className="lede-number"
             style={{ display: 'block', marginTop: 12, color: 'var(--accent)' }}
           >
             {value}
           </Display>
           <p
+            className="lede-subtitle"
             style={{
               fontFamily: 'var(--font-mincho)',
               fontStyle: 'italic',

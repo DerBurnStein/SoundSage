@@ -21,7 +21,12 @@ export interface OnboardingState {
 }
 
 export async function GET(): Promise<NextResponse<OnboardingState>> {
-  const { session, error } = await requireAuth();
+  // Demo sessions need to read state too — the OnboardingModal queries
+  // this on every dashboard mount. The pre-seeded demo user has
+  // onboardingCompletedAt set, so the modal won't auto-open in demo
+  // mode (which is the desired behavior — demo visitors aren't
+  // setting up their own data source).
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<OnboardingState>;
   const { userId } = session;
 

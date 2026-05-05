@@ -25,7 +25,7 @@ function deriveTokens(expiresAt: Date | null): TokenState {
 }
 
 export async function GET(): Promise<NextResponse<SyncStatus>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<SyncStatus>;
 
   const { userId } = session;

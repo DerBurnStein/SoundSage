@@ -5,7 +5,7 @@ import { getWeekly } from '@/lib/page-data';
 import type { WeeklySpark } from '@/types';
 
 export async function GET(req: NextRequest): Promise<NextResponse<WeeklySpark>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<WeeklySpark>;
 
   const tz = await resolveUserTimezone(session.userId, req.nextUrl.searchParams.get('tz'));

@@ -45,6 +45,12 @@ export function TabIndex({ subtitle, items }: TabIndexProps) {
           {subtitle}
         </p>
 
+        {/* Grid borders are drawn entirely by CSS in globals.css using
+            :nth-child selectors on the grid items. That way the 2-up
+            desktop layout shows internal vertical + horizontal dividers,
+            and the 1-up mobile layout (collapsed via media query) shows
+            only horizontal dividers — no stray left borders left over
+            from card 1/3 having a desktop-only left rule. */}
         <div
           className="tab-index-grid"
           style={{
@@ -53,43 +59,31 @@ export function TabIndex({ subtitle, items }: TabIndexProps) {
             border: '1px solid var(--rule)',
           }}
         >
-          {items.map((item, i) => {
-            const col = i % 2;
-            const row = Math.floor(i / 2);
-            return (
-              <TabCard
-                key={i}
-                item={item}
-                borderLeft={col === 1}
-                borderTop={row === 1}
-              />
-            );
-          })}
+          {items.map((item, i) => (
+            <TabCard key={i} item={item} />
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
-function TabCard({
-  item,
-  borderLeft,
-  borderTop,
-}: {
-  item: TabIndexItem;
-  borderLeft: boolean;
-  borderTop: boolean;
-}) {
+function TabCard({ item }: { item: TabIndexItem }) {
   return (
     <Link
       href={item.href}
+      className="tab-index-card"
+      // minWidth: 0 lets the grid cell shrink below the label's
+      // intrinsic min-content width — without it the long Patterns
+      // labels ("Mood clusters from audio features") force the grid
+      // wider than the viewport on mobile and the label's ellipsis
+      // never engages.
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 14,
         padding: '14px 18px',
-        borderLeft: borderLeft ? '1px solid var(--rule)' : 'none',
-        borderTop: borderTop ? '1px solid var(--rule)' : 'none',
+        minWidth: 0,
         color: 'var(--ink)',
         textDecoration: 'none',
         cursor: 'pointer',

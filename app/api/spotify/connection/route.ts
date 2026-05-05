@@ -6,7 +6,7 @@ import { invalidatePrefix } from '@/lib/cache';
 import logger from '@/lib/logger';
 
 export async function GET(): Promise<NextResponse> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error;
   return NextResponse.json(await getSpotifyConnection(session.userId));
 }

@@ -43,6 +43,14 @@ interface PageProps {
   searchParams: { range?: string };
 }
 
+// Force this route to render dynamically on every request. Without
+// this, Next.js may serve a cached HTML/RSC payload from a prior
+// request that didn't have the demo cookie, so changing the time-range
+// search param re-uses the cached "no session" result and shows the
+// SignInPrompt even though the layout (which always re-runs because
+// it now awaits auth()) correctly shows the demo banner.
+export const dynamic = 'force-dynamic';
+
 export default async function OverviewPage({ searchParams }: PageProps) {
   const session = await auth();
 
@@ -243,6 +251,7 @@ export default async function OverviewPage({ searchParams }: PageProps) {
       <ArtistRankList title="Listened to most" kicker="Top artists" items={topArtists.artists} />
 
       <div
+        className="overview-stream-split"
         style={{
           display: 'grid',
           gridTemplateColumns: '3fr 2fr',

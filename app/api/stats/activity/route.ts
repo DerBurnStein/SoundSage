@@ -8,7 +8,7 @@ import type { ActivityStats } from '@/types';
 const ALLOWED_GRAIN = new Set(['day', 'week', 'month']);
 
 export async function GET(req: NextRequest): Promise<NextResponse<ActivityStats>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<ActivityStats>;
 
   const params = req.nextUrl.searchParams;

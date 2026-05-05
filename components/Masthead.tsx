@@ -172,7 +172,7 @@ export function Masthead({ today }: MastheadProps) {
           ))}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div className="masthead-nav-spacer" style={{ flex: 1 }} />
         {/* `display: flex` so the picker inside stretches to the nav row's
             full height — without it the wrapper is a block and the buttons
             collapse to text-line height inside a taller bar. */}

@@ -12,7 +12,7 @@ import { getProgress } from '@/lib/sync-progress';
 export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<NextResponse> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error;
   const progress = await getProgress(session.userId);
   return NextResponse.json(

@@ -144,7 +144,7 @@ export function GenreBar({ data, loading }: GenreBarProps) {
       </div>
 
       {/* Legend grid */}
-      <div style={{
+      <div className="genre-legend" style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
         gap: '8px 24px', marginTop: 18,
       }}>

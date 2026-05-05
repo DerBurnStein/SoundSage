@@ -87,4 +87,21 @@ console.log(`\nDaily play distribution (v4 should show real variance, NOT a flat
 console.log(`  p10=${dailyDist[0].p10} p50=${dailyDist[0].p50} p90=${dailyDist[0].p90} min=${dailyDist[0].min} max=${dailyDist[0].max}`);
 console.log(`  heavy days (>=60): ${dailyDist[0].heavy_days}, (stat: zero days: ${dailyDist[0].zero_days})`);
 
+// Hour-of-day distribution — verifies the three-peak (morning / lunch /
+// evening) shape rather than a single hour swamping the chart.
+const hourDist = await db.$queryRawUnsafe(`
+  SELECT EXTRACT(HOUR FROM e."playedAt")::int AS hour, COUNT(*)::int AS plays
+  FROM listening_events e
+  WHERE e."userId" = $1 AND e.source = 'synthetic'
+  GROUP BY hour
+  ORDER BY hour
+`, userId);
+console.log(`\nHour-of-day distribution (should have THREE peaks: ~8am, ~12pm, ~7-8pm):`);
+const maxHour = Math.max(...hourDist.map((h) => h.plays), 1);
+for (const h of hourDist) {
+  const barLen = Math.round((h.plays / maxHour) * 40);
+  const bar = '█'.repeat(barLen);
+  console.log(`  ${h.hour.toString().padStart(2, '0')}:00  ${bar} ${h.plays}`);
+}
+
 await db.$disconnect();

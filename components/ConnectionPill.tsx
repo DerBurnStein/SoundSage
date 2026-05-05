@@ -130,7 +130,13 @@ export function ConnectionPill() {
             {connecting ? '…' : spotify.needsReconnect ? 'Reconnect Spotify' : 'Connect Spotify'}
           </button>
         ) : (
-          <div style={{ textAlign: 'right' }}>
+          // .connection-pill-meta is hidden on mobile via globals.css —
+          // the avatar alone communicates "you're connected" once the
+          // viewport drops below ~720px. The full name + green linked
+          // badge is desktop-only chrome; on a phone the user already
+          // knows who they are, and the badge crowds the SoundSage
+          // wordmark.
+          <div className="connection-pill-meta" style={{ textAlign: 'right' }}>
             <div style={{
               fontFamily: 'var(--font-sans)',
               fontSize: 14,

@@ -9,7 +9,7 @@ import { getImportJob } from '@/lib/import-runner';
  * Authorization: only the user who started the job can read it.
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error;
 
   const jobId = req.nextUrl.searchParams.get('jobId');

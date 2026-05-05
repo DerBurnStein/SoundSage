@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/session';
 import { getLastFmJob } from '@/lib/lastfm-scrobbles';
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error;
 
   const jobId = req.nextUrl.searchParams.get('jobId');

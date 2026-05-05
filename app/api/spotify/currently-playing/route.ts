@@ -41,7 +41,7 @@ interface SpotifyCurrentlyPlaying {
 const NOT_PLAYING: NowPlayingResponse = { playing: false };
 
 export async function GET(): Promise<NextResponse<NowPlayingResponse>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<NowPlayingResponse>;
 
   let accessToken: string;

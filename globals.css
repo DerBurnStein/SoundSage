@@ -359,13 +359,39 @@ body *, body *::before, body *::after {
   }
 }
 
-/* Below 720px: the time-range picker disappears and tab nav numbers
-   collapse so the bottom row fits comfortably. The almanac strip's
+/* Below 900px (tablet portrait + phone): the tab list and the time-
+   range picker can no longer share a single row without overlapping.
+   Stack them vertically — tabs scroll horizontally on their own row,
+   time picker sits on a second row beneath with its own border.
+   This keeps both visible AND usable, instead of the previous
+   "hide picker entirely on phones" approach which lost a useful
+   control. */
+@media (max-width: 900px) {
+  .masthead-nav-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 0 !important;
+  }
+  /* Spacer's `flex: 1` would stretch vertically in column mode and
+     punch a useless gap between rows. Hide it. */
+  .masthead-nav-spacer {
+    display: none !important;
+  }
+  /* Time picker row gets its own divider above so it reads as a
+     distinct band rather than a continuation of the tab strip. */
+  .masthead-time-picker {
+    border-top: 1px solid var(--rule);
+    padding: 0 8px;
+    overflow-x: auto;
+  }
+  .masthead-tabs {
+    padding: 0 4px;
+  }
+}
+
+/* Below 720px: tab nav numbers collapse and the almanac strip's
    font shrinks to keep the edition + date readable. */
 @media (max-width: 720px) {
-  .masthead-time-picker {
-    display: none;
-  }
   .masthead-tab-num {
     display: none !important;
   }
@@ -377,11 +403,35 @@ body *, body *::before, body *::after {
     padding: 16px 16px 12px !important;
     gap: 12px !important;
   }
-  .masthead-nav-row {
-    padding: 0 8px !important;
-  }
   .masthead-logo-name {
     font-size: 28px !important;
+  }
+  /* On phones the user already knows their own name + that they're
+     linked to Spotify. Keeping the meta block crowds the SoundSage
+     wordmark and forces the right rail wider than the screen. The
+     avatar alone signals identity; tap it to open Settings. */
+  .connection-pill-meta {
+    display: none !important;
+  }
+
+  /* Tabs row: at ~360-414px CSS width, five tabs at 12px-font ×
+     12px-18px padding sum to ~500px and force a horizontal scroll
+     (Artists clipped off-screen). Switching the tabs container to
+     `display: flex` with each tab `flex: 1` distributes the available
+     width evenly, and tighter padding + smaller font keeps each label
+     readable in its share. The container's overflow-x:auto stays as a
+     safety net for ultra-narrow devices. */
+  .masthead-tabs {
+    width: 100% !important;
+  }
+  .masthead-tabs > a {
+    flex: 1 1 0 !important;
+    padding: 10px 4px !important;
+    font-size: 11px !important;
+    letter-spacing: 0.02em !important;
+    justify-content: center !important;
+    text-align: center;
+    min-width: 0;
   }
 }
 
@@ -446,6 +496,24 @@ body *, body *::before, body *::after {
   }
 }
 
+/* TabIndex internal borders — drawn entirely by CSS so the layout can
+   collapse from 2-up to 1-up without leaving stray verticals.
+   Desktop (2-up):
+     • cards 2 + 4 (right column) get a left border separating from
+       cards 1 + 3
+     • cards 3 + 4 (bottom row) get a top border separating from
+       cards 1 + 2
+   Mobile (1-up) overrides below clear those rules and add a top
+   border to every card after the first. */
+.tab-index-grid > .tab-index-card:nth-child(2),
+.tab-index-grid > .tab-index-card:nth-child(4) {
+  border-left: 1px solid var(--rule);
+}
+.tab-index-grid > .tab-index-card:nth-child(3),
+.tab-index-grid > .tab-index-card:nth-child(4) {
+  border-top: 1px solid var(--rule);
+}
+
 /* ── Wide phones / portrait tablets (≤720px) ────────── */
 @media (max-width: 720px) {
   /* Tighten section padding everywhere so charts get more pixels */
@@ -454,18 +522,45 @@ body *, body *::before, body *::after {
     padding-right: 16px !important;
   }
 
-  /* TabIndex grid: 2-up cards become 1-up rows. The dotted/solid
-     borders between cards still draw the editorial dividers. */
+  /* TabIndex grid: 2-up cards become 1-up rows. Strip the desktop
+     left-border rule and apply a top divider to every card after the
+     first so each row gets a clean horizontal rule. */
   .tab-index-grid {
     grid-template-columns: 1fr !important;
   }
+  .tab-index-grid > .tab-index-card {
+    border-left: none !important;
+    border-top: none !important;
+  }
+  .tab-index-grid > .tab-index-card:nth-child(n+2) {
+    border-top: 1px solid var(--rule) !important;
+  }
 
-  /* Lede heading numbers shrink so they don't hard-wrap or clip. */
+  /* Lede heading shrinks: only the actual display NUMBER scales — NOT
+     the kicker (Caps) or the italic subtitle. The earlier rule used
+     `> *` which blew the kicker up huge ("A — PLAYS PERIOD" filling
+     the screen). Targeting the .lede-number class hits only the
+     Display element. */
   .lede-grid {
     gap: 16px !important;
   }
-  .lede-grid > div:first-child > * {
-    font-size: clamp(48px, 14vw, 96px) !important;
+  .lede-number {
+    font-size: clamp(48px, 14vw, 88px) !important;
+  }
+
+  /* Stream / Ingestion split: on overview, RecentStream + SyncCard sit
+     side-by-side at 3fr/2fr. Stacks on mobile so neither column is
+     squeezed under ~200px (RecentStream's timeline rule loses its
+     visual identity at extreme narrow widths). */
+  .overview-stream-split {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Genre legend: 3-up columns become 2-up so each genre name has room
+     for its label + percentage without truncation. */
+  .genre-legend {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 6px 16px !important;
   }
 
   /* Reduce extreme heights of decorative chart elements so they fit. */
@@ -484,6 +579,12 @@ body *, body *::before, body *::after {
   .stat-strip-tile {
     border-right: none !important;
     border-bottom: 1px solid var(--rule);
+  }
+
+  /* Genre legend collapses to 1-up at the smallest widths so dotted
+     underlines aren't truncating "indie pop" into "indie p…". */
+  .genre-legend {
+    grid-template-columns: 1fr !important;
   }
 
   /* Settings popover: detach from anchor and become a full-width
@@ -510,7 +611,13 @@ body *, body *::before, body *::after {
 }
 
 /* ── All viewports: prevent horizontal scroll ───────── */
+/* CRITICAL: must be `clip` not `hidden`. `overflow-x: hidden` on html
+   creates a new scrolling context, which kills `position: sticky` on
+   the masthead — the user reported the header detaching from the top
+   while scrolling after a previous attempt. `overflow-x: clip` clips
+   without establishing a scroll container, so sticky works. Supported
+   in all browsers we target (Chrome 90+, Safari 16+, Firefox 81+). */
 html, body {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100vw;
 }

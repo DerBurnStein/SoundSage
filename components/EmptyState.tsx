@@ -40,7 +40,35 @@ export function SignInPrompt({ action }: SignInPromptProps) {
         SoundSage records what you have been listening to and remembers
         the patterns of your days.
       </p>
-      <div style={{ marginTop: 8 }}>{action}</div>
+      <div
+        style={{
+          marginTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 14,
+        }}
+      >
+        {action}
+        {/* Demo entry — sets the soundsage_demo cookie via /demo/start
+            and redirects home, where the auth wrapper synthesizes a
+            session backed by the public demo user. Plain anchor (not
+            client-side fetch) so the cookie is set on the same response
+            that issues the redirect. */}
+        <a
+          href="/demo/start"
+          style={{
+            fontFamily: 'var(--font-sans)',
+            fontSize: 12,
+            color: 'var(--muted)',
+            textDecoration: 'underline',
+            textUnderlineOffset: 4,
+            letterSpacing: '0.02em',
+          }}
+        >
+          or try the demo without signing in →
+        </a>
+      </div>
     </section>
   );
 }

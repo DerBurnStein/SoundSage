@@ -8,7 +8,7 @@ const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 50;
 
 export async function GET(req: NextRequest): Promise<NextResponse<GenreStats>> {
-  const { session, error } = await requireAuth();
+  const { session, error } = await requireAuth({ allowDemo: true });
   if (error) return error as NextResponse<GenreStats>;
 
   const parsedRange = parseRange(req.nextUrl.searchParams.get('range'));
