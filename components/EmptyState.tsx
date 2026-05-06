@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Caps, Display } from './primitives';
 
 // ─── Not signed in ────────────────────────────────────────────────────────────
@@ -171,21 +172,47 @@ export function ConnectSpotifyPrompt({ onConnect }: ConnectSpotifyPromptProps) {
 // ─── Connected but waiting on first events ───────────────────────────────────
 
 export function FreshSyncWaiting() {
-  // Polls /api/sync/status every 5s and shows a soft progress beat. When
-  // events arrive, the parent's revalidation will replace this with charts.
+  // Lightweight progress beat. The previous version did a full
+  // window.location.reload() every 5 seconds, which tore down the whole
+  // page (masthead, NowPlaying widget, fonts, etc.) on every cycle and
+  // looked like an infinite refresh loop to the user.
+  //
+  // The new version polls /api/sync/status — a cheap DB count — and only
+  // calls router.refresh() (Next.js soft RSC re-render, no full reload)
+  // when events have actually arrived. The dots animation stays as the
+  // visible "we're working" cue.
   const [pulse, setPulse] = useState(0);
+  const router = useRouter();
 
   useEffect(() => {
-    const id = setInterval(() => setPulse((p) => (p + 1) % 3), 800);
-    const reload = setInterval(() => {
-      // Soft reload to pick up events as they land
-      window.location.reload();
-    }, 5000);
+    // Dots animation — purely cosmetic.
+    const dotsId = setInterval(() => setPulse((p) => (p + 1) % 3), 800);
+
+    // Poll sync status every 4s. As soon as the user has events, soft-
+    // refresh once so the parent (app/page.tsx) re-renders the dashboard
+    // with real data instead of this empty-state. After the soft refresh
+    // the page will replace this component with charts and the polling
+    // stops with it.
+    let cancelled = false;
+    const pollId = setInterval(async () => {
+      try {
+        const r = await fetch('/api/sync/status', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as { eventCount?: number };
+        if ((data.eventCount ?? 0) > 0) {
+          router.refresh();
+        }
+      } catch {
+        // Network blip — try again on the next tick.
+      }
+    }, 4000);
+
     return () => {
-      clearInterval(id);
-      clearInterval(reload);
+      cancelled = true;
+      clearInterval(dotsId);
+      clearInterval(pollId);
     };
-  }, []);
+  }, [router]);
 
   return (
     <section
@@ -212,7 +239,8 @@ export function FreshSyncWaiting() {
           maxWidth: '46ch',
         }}
       >
-        Charts will populate in roughly a minute. This page refreshes itself.
+        Charts will populate in roughly a minute. The page will update on
+        its own as soon as your plays arrive.
       </p>
     </section>
   );

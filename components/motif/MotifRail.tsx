@@ -28,7 +28,7 @@ export function MotifRail({ tab }: MotifRailProps) {
     history:  { bg: '#e8ecec', border: '#0b2545', text: '#0b2545' }, // ice + Hokusai navy
     patterns: { bg: '#fde7ec', border: '#c8456c', text: '#7a2a44' }, // pastel pink + crimson
     tracks:   { bg: '#f5e6d3', border: '#b8341f', text: '#7a2418' }, // kraft + vermilion
-    artists:  { bg: '#1a1612', border: '#d4a017', text: '#e8c060' }, // lacquer + gold
+    artists:  { bg: '#f5ecd1', border: '#b08840', text: '#3a2a14' }, // washi + kincha gold
   };
   const chip = CHIP[tab];
 

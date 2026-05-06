@@ -111,22 +111,30 @@
   --sky:     #345876;
 }
 
-/* Artists — gold leaf on lacquer black */
+/* Artists — gold leaf on washi
+ * Originally a dramatic gold-on-lacquer-black palette which made the
+ * Artists tab feel like a totally different app from the rest of the
+ * site. Reworked to a lighter "gold leaf on washi" reading: warm
+ * golden-cream paper, deep umber ink, kincha gold for the seal/seigaiha
+ * arcs. Keeps the gold-leaf identity that the Artists tab is known for
+ * while bringing it in line with the other four tabs' light palettes.
+ * Midnight mode (further down) preserves the original lacquer-black
+ * reading for users who opt in. */
 [data-tab="artists"] {
-  --paper:   #1a1612;
-  --paper-2: #221d18;
-  --paper-3: #2c251e;
-  --rule:    #d4b070;
-  --ink:     #f0dca8;
-  --ink-2:   #d4b070;
-  --muted:   #a08858;
-  --dim:     #6e5c3a;
-  --seal:    #d4a017;
+  --paper:   #f5ecd1;   /* warm golden cream */
+  --paper-2: #ede0ba;
+  --paper-3: #ddc998;
+  --rule:    #2a1f0a;   /* dark warm brown */
+  --ink:     #1c1408;   /* deep umber / sumi-on-gold */
+  --ink-2:   #3a2a14;
+  --muted:   #7a6840;
+  --dim:     #a89464;
+  --seal:    #b08840;   /* kincha — traditional gold-brown lacquer pigment */
   --ember:   #c1272d;
-  --moss:    #9aaa6a;
-  --gold:    #e8c060;
-  --plum:    #c089a0;
-  --sky:     #8eb0d2;
+  --moss:    #5a7a5a;
+  --gold:    #b08840;   /* same as seal — gold-leaf accent */
+  --plum:    #6b3a4f;
+  --sky:     #345876;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -556,6 +564,15 @@ body *, body *::before, body *::after {
     grid-template-columns: 1fr !important;
   }
 
+  /* SyncCard pipeline-status grid: 4 cells become 2-up at ≤720px. The
+     cells contain ISO timestamps and play counts that are too long to
+     fit four-across in a phone-width card; 2-up gives each cell room
+     to breathe without truncation. The right-borders inline-styled on
+     individual cells stay; one of them just lands on a wrapped row. */
+  .sync-status-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
   /* Genre legend: 3-up columns become 2-up so each genre name has room
      for its label + percentage without truncation. */
   .genre-legend {
@@ -579,6 +596,21 @@ body *, body *::before, body *::after {
   .stat-strip-tile {
     border-right: none !important;
     border-bottom: 1px solid var(--rule);
+  }
+
+  /* SyncCard pipeline status: collapse fully to 1-up on pocket phones.
+     The cursor timestamp ("2026-05-06T17:20:07.023Z") and listening-
+     events count cells need full row width to avoid clipping at the
+     smallest viewports. */
+  .sync-status-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .sync-status-cell {
+    border-right: none !important;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sync-status-cell:last-child {
+    border-bottom: none !important;
   }
 
   /* Genre legend collapses to 1-up at the smallest widths so dotted

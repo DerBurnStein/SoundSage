@@ -194,16 +194,28 @@ export function SyncCard() {
         </button>
       </div>
 
-      {/* Status cells */}
+      {/* Status cells. Fixed 4-up at desktop, collapses to 2-up via CSS at
+          ≤720px (see globals.css `.sync-status-grid` rule). The values
+          inside have `min-width: 0` so the cursor timestamp + listening-
+          events count can wrap or ellipsis instead of pushing the cell
+          past the viewport. */}
       {statusGrid.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', border: '1px solid var(--rule)', marginBottom: 14 }}>
+        <div className="sync-status-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', border: '1px solid var(--rule)', marginBottom: 14 }}>
           {statusGrid.map(([k, v, s], i) => (
-            <div key={k} style={{ padding: '14px 16px', borderRight: i < 3 ? '1px solid var(--rule)' : 'none' }}>
+            <div key={k} className="sync-status-cell" style={{ padding: '14px 16px', borderRight: i < 3 ? '1px solid var(--rule)' : 'none', minWidth: 0 }}>
               <Mono style={{ fontSize: 9, color: 'var(--dim)', letterSpacing: '0.08em', display: 'block' }}>
                 {k.toUpperCase()}
               </Mono>
-              <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, marginTop: 6, fontWeight: 500 }}>{v}</div>
-              <Mono style={{ fontSize: 10, color: 'var(--muted)', display: 'block', marginTop: 4 }}>{s}</Mono>
+              <div style={{
+                fontFamily: 'var(--font-serif)', fontSize: 18, marginTop: 6, fontWeight: 500,
+                wordBreak: 'break-word',
+                overflowWrap: 'anywhere',
+              }}>{v}</div>
+              <Mono style={{
+                fontSize: 10, color: 'var(--muted)', display: 'block', marginTop: 4,
+                wordBreak: 'break-word',
+                overflowWrap: 'anywhere',
+              }}>{s}</Mono>
             </div>
           ))}
         </div>
@@ -252,7 +264,7 @@ export function SyncCard() {
               key={l.ts + ':' + i}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '60px 14px 1fr',
+                gridTemplateColumns: '60px 14px minmax(0, 1fr)',
                 gap: 10,
                 fontFamily: 'var(--font-mono)',
                 fontSize: 11,
@@ -265,7 +277,15 @@ export function SyncCard() {
                 {new Date(l.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </span>
               <span style={{ color: kindColor(l.kind), fontWeight: 600 }}>{l.kind}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.msg}</span>
+              {/* minmax(0, 1fr) on the column + min-width: 0 here let long
+                  URLs in the message ellipsis instead of forcing the row
+                  wider than the card. */}
+              <span style={{
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>{l.msg}</span>
             </div>
           ))}
         </div>

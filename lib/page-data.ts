@@ -541,7 +541,20 @@ async function topTracksFromSnapshot(
 
 // ─── Top artists ──────────────────────────────────────────────────────────────
 
-interface TopArtistRow { artist_id: string; plays: number; unique_tracks: number }
+interface TopArtistRow {
+  artist_id: string;
+  /**
+   * Display name pulled directly from the Track row's parallel
+   * `artistNames[]` array. We carry it through the aggregation so we
+   * don't depend on the `Artist` table existing — when an artist row is
+   * missing (ESH/Last.FM imports populate Track.artistIds but not the
+   * Artist table immediately, and the artist-backfill job runs async),
+   * we still render the actual artist name instead of "Unknown artist".
+   */
+  artist_name: string | null;
+  plays: number;
+  unique_tracks: number;
+}
 
 export async function getTopArtists(
   userId: string,
@@ -554,18 +567,29 @@ export async function getTopArtists(
     rangeTtl(range),
     async () => {
       const [rows, totalRow] = await Promise.all([
+        // LATERAL UNNEST(arr1, arr2) is the canonical Postgres form for
+        // parallel-unnesting two same-length arrays into rows of paired
+        // values. We unnest both `artistIds` and `artistNames` together
+        // because every ingestion path writes them as parallel arrays
+        // (see lib/sync.ts upsertMetadata, lib/import-runner.ts, etc.).
+        // MAX(artist_name) per artist_id collapses to a single
+        // representative name even if the same artist's name string has
+        // varied across tracks (case differences, etc.).
         db.$queryRawUnsafe<TopArtistRow[]>(
-          `SELECT artist_id,
+          `SELECT u.artist_id,
+                  MAX(u.artist_name) AS artist_name,
                   COUNT(*)::int AS plays,
-                  COUNT(DISTINCT track_id)::int AS unique_tracks
-           FROM (
-             SELECT e."trackId" AS track_id, UNNEST(t."artistIds") AS artist_id
-             FROM listening_events e
-             JOIN tracks t ON t.id = e."trackId"
-             WHERE e."userId" = $1 AND e."playedAt" >= $2 AND e."playedAt" < $3
-           ) x
-           WHERE artist_id IS NOT NULL AND artist_id != ''
-           GROUP BY artist_id
+                  COUNT(DISTINCT e."trackId")::int AS unique_tracks
+           FROM listening_events e
+           JOIN tracks t ON t.id = e."trackId"
+           CROSS JOIN LATERAL UNNEST(t."artistIds", t."artistNames")
+             AS u(artist_id, artist_name)
+           WHERE e."userId" = $1
+             AND e."playedAt" >= $2
+             AND e."playedAt" < $3
+             AND u.artist_id IS NOT NULL
+             AND u.artist_id != ''
+           GROUP BY u.artist_id
            ORDER BY plays DESC
            LIMIT $4`,
           userId, from, to, limit
@@ -585,10 +609,18 @@ export async function getTopArtists(
       });
       const byId = new Map(artistRows.map((a) => [a.id, a]));
       const artists: TopArtist[] = rows.map((r) => {
+        // Prefer the canonical Artist.name if the row exists (it has the
+        // freshest casing/formatting from /v1/artists/{id} and is what
+        // the Spotify backfill job updates). Fall back to the name we
+        // captured on the Track row at the time of the play. Only
+        // default to "Unknown artist" if both are missing — which means
+        // the track itself has an empty artistNames[] entry, a
+        // genuinely-malformed row.
         const a = byId.get(r.artist_id);
+        const name = a?.name ?? r.artist_name ?? 'Unknown artist';
         return {
           id: r.artist_id,
-          name: a?.name ?? 'Unknown artist',
+          name,
           imageUrl: a?.imageUrl ?? null,
           genres: a?.genres ?? [],
           plays: r.plays,
